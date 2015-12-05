@@ -3,4 +3,4 @@ Bolt from {killer}'s crossbow strikes {victim} in abdomen. He dies
 {killer} dispatched {victim} with a shot from his trusty crossbow
 {victim} can't close his right eye, because {killer}'s bolt is sticking out of it
 {victim} is shot in the heart by {killer}. Bulls-eye!
-{killer}'s bolt strikes {victim} right in the neck. He cannot survive this
+{killer}'s bolt strikes {victim} right in the neck. He didn't survive this
