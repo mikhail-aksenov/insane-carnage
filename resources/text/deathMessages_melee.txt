@@ -1,0 +1,14 @@
+{victim} was mutilated. Mutilator is {killer}. He's joyous for a moment!
+{victim} was stabbed in the eye by {killer}
+{killer} stabbed {victim} to death
+{killer} whacked {victim}'s life outta him
+{killer} slayed {victim}
+{victim}'s stomach was cut open by {killer}
+{victim} gurgles unintelligibly after {killer} drew his weapon through his throat
+{killer} cut down {victim} {adverb}
+{victim} suffers greatly while {killer} twists his [weapon] in his [right thumb]. {victim} dies from blood loss
+{killer} slits {victim}'s throat. There's a lot of blood
+{killer} wildly swings his weapon, {victim} is cut to pieces
+{victim} is slaughtered by {killer} attacking {adverb}
+{killer} butchers {victim} with one mighty swing
+{killer}'s weapon connects with {victim}'s body. {victim} is dead

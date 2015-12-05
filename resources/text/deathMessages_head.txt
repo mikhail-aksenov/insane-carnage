@@ -1,0 +1,5 @@
+{victim} is beheaded by {killer}
+{killer} decapitated {victim}. Victim's head with a violent grimace rolls for several feet onward.
+{killer} puts much force in his blow and {victim}'s head is detached
+{victim}'s body gently falls to the ground, while his head is flying away. {killer} is victorious
+{killer} met {victim}, spit in his eye, punched his nose and cut off his head

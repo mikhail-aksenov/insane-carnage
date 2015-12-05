@@ -1,0 +1,16 @@
+{killer} killed {victim}.
+{killer} killed {victim} {adverb}
+{killer} - {victim}, 1:0.
+{killer} {adverb} murdered {victim}
+{killer} killed {victim} {adverb}
+{victim} died from {killer}'s weapon
+'{victim} is KIA. Yours, {killer}'
+{killer} took out the trash and also {victim}
+{killer} caused some unbearable pain to {victim}
+{victim} took a hit from {killer} and couldn't live with it
+{killer} mortally wounded {victim}
+{victim} was {adverb} assassinated by {killer}
+{killer} took the life of {victim}
+{victim} is done away with on behalf of {killer}
+{killer} terminated {victim}'s usage of breathing and living skills
+{victim} is subject to massacre authored by {killer}
