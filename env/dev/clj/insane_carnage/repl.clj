@@ -1,7 +1,8 @@
 (ns insane-carnage.repl
   (:use insane-carnage.handler
         ring.server.standalone
-        [ring.middleware file-info file]))
+        [ring.middleware file-info file]
+        [org.httpkit.server :as http-kit :refer [run-server]]))
 
 (defonce server (atom nil))
 
@@ -16,17 +17,37 @@
       ; Content-Type, Content-Length, and Last Modified headers for files in body
       (wrap-file-info)))
 
-(defn start-server
-  "used for starting the server in development mode from REPL"
-  [& [port]]
-  (let [port (if port (Integer/parseInt port) 3000)]
-    (reset! server
-            (serve (get-handler)
-                   {:port port
-                    :auto-reload? true
-                    :join? false}))
-    (println (str "You can view the site at http://localhost:" port))))
+;(defn start-server
+;  "used for starting the server in development mode from REPL"
+;  [& [port]]
+;  (let [port (if port (Integer/parseInt port) 3000)]
+;    (reset! server
+;            (serve (get-handler)
+;                   {:port port
+;                    :auto-reload? true
+;                    :join? false}))
+;    (println (str "You can view the site at http://localhost:" port))))
+
+;(defn app [req]
+;  {:status  200
+;   :headers {"Content-Type" "text/html"}
+;   :body    "hello HTTP!"})
 
 (defn stop-server []
-  (.stop @server)
-  (reset! server nil))
+  (when-not (nil? @server)
+    ;; graceful shutdown: wait 100ms for existing requests to be finished
+    ;; :timeout is optional, when no timeout, stop immediately
+    (stop-router!)
+    (@server :timeout 100)
+    (reset! server nil)))
+
+(defn start-server []
+  ;; The #' is useful when you want to hot-reload code
+  ;; You may want to take a look: https://github.com/clojure/tools.namespace
+  ;; and http://http-kit.org/migration.html#reload
+  (start-router!)
+  (reset! server (run-server #'app {:port 3000})))
+
+;(defn stop-server []
+;  (.stop @server)
+;  (reset! server nil))
