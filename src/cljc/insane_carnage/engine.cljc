@@ -1,9 +1,9 @@
 (ns insane-carnage.engine
   #?(:clj
-           (:require [clojure.core.async :refer [go-loop]])
-     :cljs (:require-macros [cljs.core.async.macros :refer [go-loop]]))
+           (:require [clojure.core.async :refer [go-loop go]])
+     :cljs (:require-macros [cljs.core.async.macros :refer [go-loop go]]))
   (:require [#?(:clj  clojure.core.async
-                :cljs cljs.core.async) :as async :refer [<! chan close! put! to-chan]]
+                :cljs cljs.core.async) :as async :refer [<! >! chan close! put! to-chan]]
             [#?(:clj  clj-time.core
                 :cljs cljs-time.core) :as time]))
 
@@ -31,106 +31,64 @@
 ;; }
 ;;
 
-(def turn-msecs 125)
+(defonce input-channel (chan))
 
-(defonce games (atom {}))
+(def game-channels (atom {}))
+(def games (atom {}))
+(def loop-msecs 10000)
 
-(defonce direction-map {:left       [-1 0]
-                        :up-left    [-1 -1]
-                        :up         [0 -1]
-                        :up-right   [1 -1]
-                        :right      [1 0]
-                        :down-right [1 1]
-                        :down       [0 1]
-                        :down-left  [-1 1]})
+(defn register-game [game-id]
+  (when-not (@game-channels game-id)
+    (swap! games assoc game-id { :tick 0 :status :in-progress})
+    (swap! game-channels assoc game-id { :in (chan) :out (chan) })))
 
-(defn new-uuid
-  []
-  #?(:clj  (java.util.UUID/randomUUID)
-     :cljs (random-uuid)))
+(defn unregister-game [game-id]
+  (do
+    (when-let [chans (@game-channels game-id)]
+      (async/close! (:in chans))
+      (async/close! (:out chans)))
+    (swap! game-channels dissoc game-id)))
 
-(defn rand-range [min max]
-  (+ min (rand-int max)))
+(defn start-engine []
+  (go
+    (while true
+      (let [message (<! input-channel)
+            {:keys [game-id msg]} message]
+        (when-let [ch (get-in @game-channels [game-id :in])]
+          (>! ch msg))))))
 
-(defn test-player []
-  {(new-uuid) {
-               :position {:x (rand-range 0 2)
-                          :y (rand-range 0 2)}}})
+(defn current-time-millis []
+  #?(:clj (System/currentTimeMillis)
+     :cljs (.getTime (js/Date.))))
 
-(defn make-game [x-size y-size]
-  {:game-id         (new-uuid)
-   :status          :in-progress
-   :players         {}
-   :attacked-fields {}
-   :x-size          x-size
-   :y-size          y-size})
+(defn consume-out [game-id]
+  (when-let [ch (get-in @game-channels [game-id :out])]
+    (go-loop []
+             (when-let [v (<! ch)]
+               (println v (current-time-millis))
+               (recur)))))
 
-(defn ->positions
-  [players]
-  (reduce-kv (fn [coll _ v]
-               (conj coll (:position v))) [] players))
+(defn game-in-progress? [game-id]
+  (= (get-in @games [game-id :status]) :in-progress))
 
-(defn random-position [min max prohibited]
-  (loop []
-    (let [pos {:x (rand-range min max)
-               :y (rand-range min max)}]
-      (if (some prohibited pos)
-        (recur)
-        pos))))
+(defn game-loop [game-id]
+  (let [in-events (get-in @game-channels [game-id :in])
+        out-events (get-in @game-channels [game-id :out])]
+    (go
+      (while (game-in-progress? game-id)
+        (let [msg (<! in-events)]
+          (when (= (:tick msg) (get-in @games [game-id :tick]))
+            (println "Player action")))))
+    (go
+      (while (game-in-progress? game-id)
+        (<! (async/timeout loop-msecs))
+        (swap! games update-in [game-id :tick] inc)
+        (>! out-events { :game-id game-id :msg (get-in @games [game-id :tick])})))))
 
-;; (apply merge (take 5 (repeatedly test-player)))
-
-;(defn make-player [player-id players attacked-fields]
-;  (let [prohibited-positions (into []
-;                                   (concat (->positions players)
-;                                           (->positions attacked-fields)))
-;        position 1]
-;    {player-id {:position {:x :y}
-;
-;                }}))
-
-(defn player-move [old-pos move]
-  (let [[dx dy] (direction-map move)
-        [x y] old-pos]
-    [(+ x dx) (+ y dy)]))
-
-(defn make-move [state player]
-  (let [{:keys [player-id move]} player
-        {:keys [direction hit]} move]))
-
-;(defn game-loop [state event-ch]
-;  (go-loop []
-;           (when (= (:status state) :in-progress)
-;             (let [[v p]]
-;               (async/alts! [event-ch (async/timeout turn-msecs)])
-;                          ())
-;
-;
-;             (recur))))
-
-;; ----------------
-;; Hit collision
-
-(defmulti player-hit?
-          (fn [player hit] (:type hit)))
-
-(defmethod player-hit? :sword [player hit]
-  )
-
-(defn- player-under-hit [all-players hit]
-  (let [{:keys [player-id]} hit
-        players (dissoc all-players player-id)]
-    (->> players
-         (vals)
-         (map #(player-hit? % hit))
-         (remove nil)
-         (first))))
-
-(defn find-hit-collisions [game]
-  (let [{:keys [players hits]} game
-        hit-collision (partial player-under-hit players)]
-    (->> hits
-         (map hit-collision))))
+;(register-game 1)
+;(start-engine)
+;(consume-out 1)
+;(game-loop 1)
 
 ;; ----------------
 ;; Move
@@ -258,4 +216,3 @@
         (-> game
             (apply-hit-all-affected affected-players damage)
             (update-hit-time player ts))))))
-
