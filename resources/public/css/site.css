@@ -92,7 +92,6 @@ a:hover {
 }
 #battle-log {
   position: fixed;
-  padding: 1rem;
   width: 40rem;
   height: 23rem;
   bottom: 3rem;
@@ -106,13 +105,15 @@ a:hover {
   opacity: 0.8;
 }
 #battle-log.log-hidden {
-  height: 11rem;
+  height: 10rem;
 }
 #log-entries {
   flex-grow: 1;
+  padding: 0.5rem;
   background-color: #80CBC4;
   bottom: 0;
-  overflow-y: scroll;
+  overflow-y: auto;
+  overflow-x: hidden;
   width: 100%;
 }
 #log-entries .ts {

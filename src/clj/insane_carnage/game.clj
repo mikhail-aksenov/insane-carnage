@@ -3,7 +3,8 @@
             [insane-carnage.engine :as engine]
             [clojure.string :as str]
             [clj-time.core :as time]
-            [clj-time.format :as time-format]))
+            [clj-time.format :as time-format]
+            [clojure.data :refer [diff]]))
 
 (defn uuid [] (str (java.util.UUID/randomUUID)))
 
@@ -98,6 +99,19 @@
 
 (defn- get-game [game-id]
   (get-in @server-state [:games game-id]))
+
+(defn- game-live-player-ids [game]
+  (->> game
+       (:players)
+       (vals)
+       (filter :player-id)
+       (map :player-id)))
+
+;(defn- update-game-and-notify [game]
+;  (let [{:keys [game-id]} game
+;        old-game (get-in server-state [:games game-id])
+;        [_ updates _] (diff old-game game)]
+;    ()))
 
 (defn start-new-game [player-id player-name]
   (let [game (generate-game)
