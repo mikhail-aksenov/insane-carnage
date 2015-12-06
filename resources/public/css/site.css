@@ -44,3 +44,22 @@ a:hover {
 #wait-screen h1 {
   margin-bottom: 4rem;
 }
+#game-field {
+  margin: 5rem;
+}
+#game-field .bg {
+  fill: gray;
+  mask: url(#sight-mask);
+}
+#game-field .tile-group rect {
+  fill: #C5E1A5;
+  stroke: white;
+}
+#game-field .player {
+  fill: #80DEEA;
+  transition: all 0.2s ease;
+}
+#game-hud {
+  position: fixed;
+  margin: 5rem;
+}

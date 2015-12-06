@@ -46,3 +46,29 @@ a:hover {
     text-align: center;
     h1 { margin-bottom: 4rem; }
 }
+
+#game-field {
+    margin: 5rem;
+
+    .bg {
+        fill: gray;
+        mask: url(#sight-mask);
+    }
+
+    .tile-group {
+        rect {
+            fill: #C5E1A5;
+            stroke: white;
+        }
+    }
+
+    .player {
+        fill: #80DEEA;
+        transition: all 0.2s ease;
+    }
+}
+
+#game-hud {
+    position: fixed;
+    margin: 5rem;
+}

@@ -37,15 +37,21 @@
 ;; -------------------------
 ;; WebSoket Handlers
 
-(let [{:keys [ch-recv send-fn ajax-post-fn ajax-get-or-ws-handshake-fn
-              connected-uids]}
-      (sente/make-channel-socket! sente-web-server-adapter {})]
-  (def ring-ajax-post ajax-post-fn)
-  (def ring-ajax-get-or-ws-handshake ajax-get-or-ws-handshake-fn)
-  (def ch-chsk ch-recv)                                     ; ChannelSocket's receive channel
-  (def chsk-send! send-fn)                                  ; ChannelSocket's send API fn
-  (def connected-uids connected-uids)                       ; Watchable, read-only atom
-  )
+(defonce router_ (atom nil))
+(defn stop-router! [] (when-let [stop-f @router_] (stop-f)))
+(defn start-router! []
+  (stop-router!)
+  (log/info "Start Sente router")
+  (let [{:keys [ch-recv send-fn ajax-post-fn ajax-get-or-ws-handshake-fn
+                connected-uids]}
+        (sente/make-channel-socket! sente-web-server-adapter {})]
+    (def ring-ajax-post ajax-post-fn)
+    (def ring-ajax-get-or-ws-handshake ajax-get-or-ws-handshake-fn)
+    (def ch-chsk ch-recv)                                   ; ChannelSocket's receive channel
+    (def chsk-send! send-fn)                                ; ChannelSocket's send API fn
+    (def connected-uids connected-uids)                     ; Watchable, read-only atom
+
+    (reset! router_ (sente/start-chsk-router! ch-chsk event-msg-handler*))))
 
 (defmulti event-msg-handler :id)
 
@@ -53,16 +59,25 @@
   (log/debug "Event: %s" event)
   (event-msg-handler ev-msg))
 
+(defn- get-player-id [ring-req]
+  (get-in ring-req [:cookies "player-id" :value]))
+
 (defmethod event-msg-handler :game/start
-  [{:as ev-msg :keys [event id ?reply-fn]}]
-  (let [[_ {:keys [player-name player-id game-id]}] event]
+  [{:as ev-msg :keys [event id ring-req ?reply-fn]}]
+  (let [[_ {:keys [player-name game-id]}] event
+        player-id (get-player-id ring-req)]
     (log/info "Join game" game-id "as" player-name "(" player-id ")")
     (if-let [game
              (case game-id
                "new" (game/start-new-game player-id player-name)
                "random" (game/join-random-game player-id player-name)
-               (game/join-game player-id player-name game-id))]
+               (game/join-or-create-game player-id player-name game-id))]
       (?reply-fn game))))
+
+(defmethod event-msg-handler :game/quit
+  [{:as ev-msg :keys [event id ring-req ?reply-fn]}]
+  (let [player-id (get-player-id ring-req)]
+    (game/unbind-player-from-game player-id)))
 
 (defmethod event-msg-handler :default                       ; Fallback
   [{:as ev-msg :keys [event id ?data ring-req ?reply-fn send-fn]}]
@@ -73,12 +88,6 @@
     (when ?reply-fn
       (?reply-fn {:umatched-event-as-echoed-from-from-server event}))))
 
-(defonce router_ (atom nil))
-(defn stop-router! [] (when-let [stop-f @router_] (stop-f)))
-(defn start-router! []
-  (stop-router!)
-  (reset! router_ (sente/start-chsk-router! ch-chsk event-msg-handler*)))
-
 ;; -------------------------
 ;; Routes
 
@@ -87,6 +96,8 @@
            (GET "/chsk" req (ring-ajax-get-or-ws-handshake req))
            (POST "/chsk" req (ring-ajax-post req))
            (resources "/")
+           ;(Get "/game/:id" [id]
+           ;     (game/join-or-create-game ))
            (GET "/*" [] loading-page)
            (not-found "Not Found"))
 
