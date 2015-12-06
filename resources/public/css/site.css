@@ -44,6 +44,7 @@ a:hover {
 }
 #game-field {
   margin: 5rem;
+  text-align: center;
 }
 #game-field .bg {
   fill: gray;
@@ -100,6 +101,7 @@ a:hover {
   position: fixed;
   width: 40rem;
   height: 23rem;
+  left: 3rem;
   bottom: 3rem;
   overflow: hidden;
   opacity: 0.3;

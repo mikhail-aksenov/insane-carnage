@@ -53,32 +53,54 @@
   (chsk-send! [:game/quit])
   (accountant/navigate! "/"))
 
-(defn key-code->action [code]
-  (if (= code 32)
-    {:state :hit}
-    (if-let [dir (case code
-                   37 :left                                 ; arrow left
-                   65 :left                                 ; a
+(defn key-down-code->action [code]
+  (or
+    (when (= code 32)
+      {:type :hit})
+    (when-let [dir (case code
+                     37 :left                               ; arrow left
+                     65 :left                               ; a
+                     39 :right                              ; right arrow
+                     68 :right                              ; d
+                     nil)]
+      {:type      :turn
+       :direction dir})
+    (when-let [dir (case code
+                     38 :forward                            ; up arrow
+                     87 :forward                            ; w
+                     40 :backward                           ; down arrow
+                     83 :backward                           ; s
+                     nil)]
+      {:type      :move
+       :direction dir})))
+
+(defn key-up-code->action [code]
+  (when-let [dir (case code
                    38 :forward                              ; up arrow
                    87 :forward                              ; w
-                   39 :right                                ; right arrow
-                   68 :right                                ; d
                    40 :backward                             ; down arrow
                    83 :backward                             ; s
                    nil)]
-      {:state :move
-       :dir   dir})))
+    {:type :stop}))
+
+(defn send-action! [action]
+  (println "Send action" action)
+  (chsk-send! [:player/action action]))
 
 (defn on-keydown [e]
   (js/console.log "keydown" e)
-  (if-let [action (key-code->action (.-keyCode e))]
-    (chsk-send! [:player/action
-                 (assoc action :stop? false)])))
+  (when-let [action (key-down-code->action (.-keyCode e))]
+    (send-action! action)))
 
 (defn on-keyup [e]
-  (if-let [action (key-code->action (.-keyCode e))]
-    (chsk-send! [:player/action
-                 (assoc action :stop? true)])))
+  (when-let [action (key-up-code->action (.-keyCode e))]
+    (send-action! action)))
+
+(defn update-game! [game-id update]
+  (if (not= game-id (:game-id @db))
+    (println "Got update for other game (id" game-id
+             "instead of" (:game-id @db) ")")
+    (swap! db update-in [:game] merge update)))
 
 ;; ----------
 ;; Rendering
@@ -248,7 +270,7 @@
   (js/window.removeEventListener "keydown" on-keydown)
   (js/window.removeEventListener "keyup" on-keyup))
 
-(defonce log-visible (atom true))
+(defonce log-visible (atom false))
 
 (defn render-log [game-started log]
   [:div#battle-log {:class (when-not @log-visible "log-hidden")}
@@ -274,16 +296,17 @@
         visible-bounds (get-visible-bounds game player)
         time-passed (get-passsed-time game)]
     (println "render-field player" game-player-id player)
-    [:div#game-field
-     [:svg {:width  600
-            :height 600}
-      (svg-defs player sight)
-      [:g {:transform (top-transform player sight)
-           :style     {:mask "url(#sight-mask)"}}
-       [:g.tile-group
-        (render-tiles game visible-bounds)]
-       [:g.player-group
-        (render-players @db game visible-bounds time-passed)]]]
+    [:div
+     [:div#game-field
+      [:svg {:width  600
+             :height 600}
+       (svg-defs player sight)
+       [:g {:transform (top-transform player sight)
+            :style     {:mask "url(#sight-mask)"}}
+        [:g.tile-group
+         (render-tiles game visible-bounds)]
+        [:g.player-group
+         (render-players @db game visible-bounds time-passed)]]]]
      (render-hud game player)
      (render-log (:game-started game) (:log game))
      ]))

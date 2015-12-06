@@ -9,7 +9,8 @@
             [taoensso.sente :as sente :refer (cb-success?)]
             [insane-carnage.welcome :refer [welcome]]
             [insane-carnage.db :refer [db]]
-            [insane-carnage.game :as game]))
+            [insane-carnage.game :as game]
+            [insane-carnage.talk :as talk]))
 
 (enable-console-print!)
 
@@ -53,6 +54,28 @@
 ;  (def chsk-send! send-fn)                                  ; ChannelSocket's send API fn
 ;  (def chsk-state state)                                    ; Watchable, read-only atom
 ;  )
+
+(defmulti event-msg-handler :id)
+
+(defmethod event-msg-handler :game/update
+  [{:as ev-msg :keys [event id ?reply-fn]}]
+  (let [[_ {:keys [game-id update]}] event]
+    (println "Update game" game-id "with update" update)
+    (game/update-game! game-id update)))
+
+(defmethod event-msg-handler :default
+  [{:as ev-msg :keys [event id ?reply-fn]}]
+  (when-not (.startsWith (-> event first str) ":chsk")
+    (println "Unhandled event" event)))
+
+(defn event-msg-handler* [{:as ev-msg :keys [id ?data event]}]
+  (println "Event" event)
+  (event-msg-handler ev-msg))
+
+(defn listen-web-socket! []
+  (sente/start-chsk-router! talk/ch-chsk event-msg-handler*))
+
+(listen-web-socket!)
 
 ;; -------------------------
 ;; Routes

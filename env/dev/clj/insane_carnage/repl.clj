@@ -3,6 +3,7 @@
         ring.server.standalone
         [ring.middleware file-info file]
         [org.httpkit.server :as http-kit :refer [run-server]]
+        ;[insane-carnage.engine :as engine]
         [insane-carnage.game :as game]))
 
 (defonce server (atom nil))

@@ -1,6 +1,7 @@
 (ns insane-carnage.handler
   (:require [compojure.core :refer [GET POST defroutes]]
             [compojure.route :refer [not-found resources]]
+            [clojure.core.async :refer [go-loop go <! >! chan close! put! to-chan]]
             [ring.middleware.defaults :refer [site-defaults wrap-defaults]]
             [hiccup.core :refer [html]]
             [hiccup.page :refer [include-js include-css]]
@@ -37,6 +38,18 @@
 ;; -------------------------
 ;; WebSoket Handlers
 
+(declare chsk-send!)
+
+(defn send-game-updates [game-id update player-id]
+  (chsk-send! player-id [:game/update {:game-id game-id
+                                       :update  update}]))
+
+(defn listen-game-updates []
+  (go-loop []
+    (when-let [{:keys [game-id update] :as msg} (<! game/update-chan)]
+      (->> (game/game-live-player-ids game-id)
+           (map #(send-game-updates game-id update %))))))
+
 (declare event-msg-handler*)
 
 (defonce router_ (atom nil))
@@ -52,15 +65,14 @@
     (def ch-chsk ch-recv)                                   ; ChannelSocket's receive channel
     (def chsk-send! send-fn)                                ; ChannelSocket's send API fn
     (def connected-uids connected-uids)                     ; Watchable, read-only atom
-
-    (reset! router_ (sente/start-chsk-router! ch-chsk event-msg-handler*))))
+    (reset! router_ (sente/start-chsk-router! ch-chsk event-msg-handler*))
+    (listen-game-updates)))
 
 (defmulti event-msg-handler :id)
 
 (defn event-msg-handler* [{:as ev-msg :keys [id ?data event]}]
   (log/debug "Event: %s" event)
   (event-msg-handler ev-msg))
-
 
 (defn- get-player-id [ring-req]
   (get-in ring-req [:cookies "player-id" :value]))
@@ -85,8 +97,9 @@
 (defmethod event-msg-handler :player/action
   [{:as ev-msg :keys [event id ring-req ?reply-fn]}]
   (let [player-id (get-player-id ring-req)
-        {:keys [state dir stop?]} event]
-    (game/process-direction player-id dir stop?)))
+        [_ action] event]
+    (log/info "Player" player-id "action" action)
+    (game/process-action player-id action)))
 
 (defmethod event-msg-handler :default                       ; Fallback
   [{:as ev-msg :keys [event id ?data ring-req ?reply-fn send-fn]}]

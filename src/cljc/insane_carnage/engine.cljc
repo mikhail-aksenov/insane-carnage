@@ -1,11 +1,13 @@
 (ns insane-carnage.engine
   #?(:clj
-           (:require [clojure.core.async :refer [go-loop go]])
+           (:require [clojure.core.async :refer [go-loop go]]
+                     [clojure.tools.logging :as log])
      :cljs (:require-macros [cljs.core.async.macros :refer [go-loop go]]))
   (:require [#?(:clj  clojure.core.async
                 :cljs cljs.core.async) :as async :refer [<! >! chan close! put! to-chan]]
             [#?(:clj  clj-time.core
-                :cljs cljs-time.core) :as time]))
+                :cljs cljs-time.core) :as time]
+            [clojure.data :refer [diff]]))
 
 ;; Game map structure
 ;; { :game-id guid
@@ -31,16 +33,19 @@
 ;; }
 ;;
 
+(declare process-all-moves)
+
 (defonce input-channel (chan))
 
 (def game-channels (atom {}))
 (def games (atom {}))
 (def loop-msecs 10000)
 
-(defn register-game [game-id]
-  (when-not (@game-channels game-id)
-    (swap! games assoc game-id { :tick 0 :status :in-progress})
-    (swap! game-channels assoc game-id { :in (chan) :out (chan) })))
+(defn register-game [game]
+  (let [game-id (:game-id game)]
+    (when-not (@game-channels game-id)
+      (swap! games assoc game-id game)
+      (swap! game-channels assoc game-id {:in (chan) :out (chan)}))))
 
 (defn unregister-game [game-id]
   (do
@@ -58,7 +63,7 @@
           (>! ch msg))))))
 
 (defn current-time-millis []
-  #?(:clj (System/currentTimeMillis)
+  #?(:clj  (System/currentTimeMillis)
      :cljs (.getTime (js/Date.))))
 
 (defn consume-out [game-id]
@@ -71,6 +76,14 @@
 (defn game-in-progress? [game-id]
   (= (get-in @games [game-id :status]) :in-progress))
 
+(defn update-game [game-id]
+  (let [old-game (get @games game-id)
+        new-game (process-all-moves game-id)
+        [_ upd-chunk _] (diff old-game new-game)
+        out-events (get-in @game-channels [game-id :out])]
+    (put! out-events {:game-id game-id
+                      :update upd-chunk})))
+
 (defn game-loop [game-id]
   (let [in-events (get-in @game-channels [game-id :in])
         out-events (get-in @game-channels [game-id :out])]
@@ -78,15 +91,16 @@
       (while (game-in-progress? game-id)
         (let [msg (<! in-events)]
           (when (= (:tick msg) (get-in @games [game-id :tick]))
-            (println "Player action")))))
+            ;(println "Player action")
+            (update-game game-id)))))
     (go
       (while (game-in-progress? game-id)
         (<! (async/timeout loop-msecs))
         (swap! games update-in [game-id :tick] inc)
-        (>! out-events { :game-id game-id :msg (get-in @games [game-id :tick])})))))
+        (>! out-events {:game-id game-id :msg (get-in @games [game-id :tick])})))))
 
 ;(register-game 1)
-;(start-engine)
+(start-engine)
 ;(consume-out 1)
 ;(game-loop 1)
 
@@ -112,36 +126,62 @@
            (when (= v x) idx)))
        (first)))
 
-(defn neighbor-direction [direction offset]
-  (let [idx (index-of direction cw-directions)
-        nidx (+ idx offset)
-        cnt (count cw-directions)]
-    (cond
-      (> nidx cnt) (- nidx cnt)
-      (< nidx 0) (+ nidx cnt)
-      :else nidx)))
+(defn log-info [& args]
+  #?(:clj  (log/info args)
+     :cljs (apply println args)))
 
-(defn update-player-direction [game player turn]
-  (let [{:keys [direction]} player
-        new-dir (case turn
+(defn neighbor-direction [direction offset]
+  (log-info "neighbor-direction" direction offset cw-directions)
+  (let [idx (index-of direction cw-directions)
+        cnt (count cw-directions)
+        nidx (+ idx offset)
+        nidx (cond
+               (> nidx cnt) (- nidx cnt)
+               (< nidx 0) (+ nidx cnt)
+               :else nidx)]
+    (get cw-directions nidx)))
+
+(defn turn-player [game game-player turn-direction]
+  (let [{:keys [direction]} game-player
+        new-dir (case turn-direction
                   :left (neighbor-direction direction -1)
                   :right (neighbor-direction direction 1))]
-    (update-in game [:players (:player player) direction] new-dir)))
+    (assoc-in game [:players (:id game-player) :direction] new-dir)))
 
-(defn update-move-state [game player stop?]
+(defn move-player [game game-player direction]
+  (update-in game
+             [:players (:id game-player)]
+             assoc
+             :state :moving
+             :move-direction (case direction
+                               :forward 1
+                               :backward -1)))
+
+(defn stop-player [game game-player]
   (assoc-in game
-            [:players (:player-id player)]
-            (if stop? :staying :moving)))
+            [:players (:id game-player)]
+            :staying))
 
-(defn move-player [game player]
+(defn process-player-move [game game-player]
   (let [{:keys [width height]} game
-        {:keys [x y direction player-id]} player
-        [nx ny] (map + [x y] direction)
+        {:keys [x y direction move-direction id]} game-player
+        [nx ny] (->> direction
+                     (map #(* % move-direction))
+                     (map + [x y]))
         [nx ny] [(keep-in-range nx 0 width)
                  (keep-in-range ny 0 height)]]
     (update-in game
-               [:players player-id]
-               assoc :x nx :y ny)))
+               [:players id]
+               assoc
+               :x nx
+               :y ny)))
+
+(defn process-all-moves [game-id]
+  (let [game (get @games game-id)]
+    (reduce
+      process-player-move
+      game
+      (->> game :players vals))))
 
 ;; ----------------
 ;; Hit
@@ -216,3 +256,25 @@
         (-> game
             (apply-hit-all-affected affected-players damage)
             (update-hit-time player ts))))))
+
+;; --------
+;; Actions
+
+(defn get-game-player [game {:keys [game-player-id] :as player}]
+  (get-in game [:players game-player-id]))
+
+(defmulti process-action
+          (fn [game player action] (:type action)))
+
+(defmethod process-action :hit [game player action]
+  (let [ts (current-time-millis)]
+    (process-hit game player ts)))
+
+(defmethod process-action :turn [game player action]
+  (turn-player game (get-game-player game player) (:direction action)))
+
+(defmethod process-action :move [game player action]
+  (move-player game (get-game-player game player) (:direction action)))
+
+(defmethod process-action :stop [game player action]
+  (stop-player game (get-game-player game player)))

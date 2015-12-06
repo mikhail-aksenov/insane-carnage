@@ -1,5 +1,6 @@
 (ns insane-carnage.game
   (:require [clojure.tools.logging :as log]
+            [clojure.core.async :refer [go-loop go <! >! chan close! put! to-chan]]
             [insane-carnage.engine :as engine]
             [clojure.string :as str]
             [clj-time.core :as time]
@@ -12,13 +13,16 @@
   {:games   {}
    :players {}})
 
-(def server-state
-  (atom init-state))
+;(def server-state
+;  (atom init-state))
+(def players (atom {}))
 
-(def game-chan)
+(defonce update-chan (chan))
 
 (defn reset-all! []
-  (reset! server-state init-state))
+  nil
+  ;(reset! server-state init-state)
+  )
 
 (def valid-directions
   (for [x (range 3)
@@ -40,15 +44,16 @@
          (map (fn [[x y]]
                 (let [id (uuid)]
                   [id
-                   {:x           x
-                    :y           y
-                    :id          id
-                    :hp          100
-                    :max-hp      100
-                    :last-hit-at 0
-                    :direction   (rand-nth valid-directions)
-                    :state       (rand-nth [:moving :staying])
-                    :type        (rand-nth unit-types)}])))
+                   {:x              x
+                    :y              y
+                    :id             id
+                    :hp             100
+                    :max-hp         100
+                    :last-hit-at    0
+                    :direction      (rand-nth valid-directions)
+                    :move-direction (rand-nth [-1 1])
+                    :state          (rand-nth [:moving :staying])
+                    :type           (rand-nth unit-types)}])))
          (shuffle)
          (into {}))))
 
@@ -72,59 +77,79 @@
       :sight        15
       :players      (generate-players width height 30)
       :game-started (str ts)
+      :tick         0
+      :status       :in-progress
       :log          [{:ts      (format-log-time ts ts)
                       :message "Game started"}]
       })))
 
-(defn- ensure-player [state player-id player-name]
-  (assoc-in state [:players player-id] {:player-id   player-id
-                                        :player-name player-name}))
+(defn- ensure-player [players player-id player-name]
+  (assoc players player-id {:player-id   player-id
+                            :player-name player-name}))
 
-(defn find-available-game-player [state game-id]
-  (let [players (get-in state [:games game-id :players])]
+(defn find-available-game-player [game]
+  (let [players (:players game)]
     (->> players
          (vals)
          (filter #(not (:player-id %)))
          (first))))
 
-(defn- bind-player-to-game [state player-id game-id]
-  (let [game-player (find-available-game-player state game-id)]
-    (log/info "Bind player" player-id "to game" game-id "player" game-player)
-    (-> state
-        (assoc-in [:players player-id :game-id] game-id)
-        (assoc-in [:players player-id :game-player-id] (:id game-player))
-        (assoc-in [:games game-id :players (:id game-player) :player-id]
-                  player-id))))
+(defn- bind-player-to-game [games game-player player-id game-id]
+  (assoc-in games [game-id :players (:id game-player) :player-id] player-id))
+
+(defn- bind-game-to-player [players game-player player-id game-id]
+  (update-in players
+             [player-id]
+             assoc
+             :game-id game-id
+             :game-player-id (:id game-player)))
 
 (defn- choose-random-game []
-  (-> (:games @server-state) vals rand-nth))
+  (-> @engine/games vals rand-nth))
 
 (defn- get-game [game-id]
-  (get-in @server-state [:games game-id]))
+  (get @engine/games game-id))
 
-(defn- game-live-player-ids [game]
-  (->> game
+(defn game-live-player-ids [game-id]
+  (->> (get @engine/games game-id)
        (:players)
        (vals)
        (filter :player-id)
        (map :player-id)))
 
-;(defn- update-game-and-notify [game]
-;  (let [{:keys [game-id]} game
-;        old-game (get-in server-state [:games game-id])
-;        [_ updates _] (diff old-game game)]
-;    ()))
+(defn update-games-and-players [game player-id player-name]
+  (let [game-id (:game-id game)
+        game-player (find-available-game-player game)]
+    (swap! engine/games
+           #(-> %
+                (assoc game-id game)
+                (bind-player-to-game game-player player-id game-id)))
+    (swap! players
+           #(-> %
+                (ensure-player player-id player-name)
+                (bind-game-to-player game-player player-id game-id)))))
+
+(defn game-updated [game-id update]
+  ())
+
+(defn register-game [game]
+  (let [{:keys [game-id]} game
+        out-events (get-in @engine/game-channels [game-id :out])]
+    (engine/register-game game-id)
+    (engine/game-loop game-id)
+    (go-loop []
+      (when-let [msg (<! out-events)]
+        (when-let [update (:update msg)]
+          (game-updated (:game-id msg) update))))))
 
 (defn start-new-game [player-id player-name]
   (let [game (generate-game)
-        game-id (:game-id game)]
+        game-id (:game-id game)
+        game-player (find-available-game-player game)]
     (log/info "Player" player-id "(" player-name ") started new game" game-id)
-    (swap! server-state
-           #(-> %
-                (assoc-in [:games game-id] game)
-                (ensure-player player-id player-name)
-                (bind-player-to-game player-id game-id)))
-    (get-in @server-state [:games game-id])))
+    (update-games-and-players game player-id player-name)
+    (register-game game)
+    (get-game game-id)))
 
 (defn join-random-game [player-id player-name]
   (log/info "Player" player-id "(" player-name ") want to join a random game")
@@ -134,12 +159,8 @@
                (log/spyf "No game to choose from. Create new game."
                          (generate-game)))
         game-id (:game-id game)]
-    (swap! server-state
-           #(-> %
-                (assoc-in [:games game-id] game)
-                (ensure-player player-id player-name)
-                (bind-player-to-game player-id game-id)))
-    game))
+    (update-games-and-players game player-id player-name)
+    (get-game game-id)))
 
 (defn join-or-create-game [player-id player-name game-id]
   (log/info "Player" player-id "(" player-name ") want to join game" game-id)
@@ -148,26 +169,22 @@
                          (get-game game-id))
                (log/spyf "Game doesn't exist. Create new game."
                          (generate-game game-id)))]
-    (swap! server-state
-           #(-> %
-                (ensure-player player-id player-name)
-                (bind-player-to-game player-id game-id)))
-    game))
+    (update-games-and-players game player-id player-name)
+    (get-game game-id)))
 
 (defn unbind-player-from-game [player-id]
-  (if-let [player (get-in @server-state [:players player-id])]
+  (if-let [player (get @players player-id)]
     (let [{:keys [game-id game-player-id]} player]
       (log/info "Unbind player" player-id "from game" game-id "(game player " game-player-id ")")
-      (swap! server-state
+      (swap! engine/games
              #(-> %
-                  (dissoc [:players player-id :game-id])
-                  (dissoc [:players player-id :game-player-id])
-                  (dissoc [:games game-id :players game-player-id :player-id]))))))
+                  (dissoc game-id :players game-player-id :player-id)))
+      (swap! players
+             #(-> %
+                  (dissoc player-id :game-id)
+                  (dissoc player-id :game-player-id))))))
 
-(defn process-direction [player-id dir add?]
-  (let [player (get-in @server-state [:players player-id])
-        game (get-in @server-state [:games (:game-id player)])]
-    (if add?
-      nil                                                   ;(engine/add-direction game player dir)
-      nil                                                   ;(engine/remove-direction game player dir)
-      )))
+(defn process-action [player-id action]
+  (let [player (get @players player-id)
+        game (get-game (:game-id player))]
+    (engine/process-action game player action)))
