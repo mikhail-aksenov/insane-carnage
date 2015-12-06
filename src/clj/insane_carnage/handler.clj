@@ -37,6 +37,8 @@
 ;; -------------------------
 ;; WebSoket Handlers
 
+(declare event-msg-handler*)
+
 (defonce router_ (atom nil))
 (defn stop-router! [] (when-let [stop-f @router_] (stop-f)))
 (defn start-router! []
@@ -58,6 +60,7 @@
 (defn event-msg-handler* [{:as ev-msg :keys [id ?data event]}]
   (log/debug "Event: %s" event)
   (event-msg-handler ev-msg))
+
 
 (defn- get-player-id [ring-req]
   (get-in ring-req [:cookies "player-id" :value]))
