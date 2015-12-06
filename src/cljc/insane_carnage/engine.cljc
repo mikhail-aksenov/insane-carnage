@@ -35,7 +35,7 @@
   (when-let [ch (get-in @game-channels [game-id :out])]
     (go-loop []
              (when-let [v (<! ch)]
-               (println v System/currentTimeMillis.)
+               (println v (System/currentTimeMillis))
                (recur)))))
 
 (defn game-in-progress? [game-id]
