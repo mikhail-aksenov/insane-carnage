@@ -1,8 +1,6 @@
 body {
   font-family: 'Helvetica Neue', Verdana, Helvetica, Arial, sans-serif;
-  max-width: 600px;
   margin: 0 auto;
-  padding-top: 72px;
   -webkit-font-smoothing: antialiased;
   font-size: 1.125em;
   color: #333;
@@ -56,10 +54,28 @@ a:hover {
   stroke: white;
 }
 #game-field .player {
-  fill: #80DEEA;
+  fill: #CFD8DC;
   transition: all 0.2s ease;
+}
+#game-field .player.live {
+  fill: #ef9a9a;
+}
+#game-field .player.live.you {
+  fill: #80DEEA;
 }
 #game-hud {
   position: fixed;
-  margin: 5rem;
+  top: 0;
+  left: 0;
+  width: 100%;
+  margin: 5rem 0;
+}
+#game-hud .player-state {
+  position: absolute;
+  width: 15rem;
+  left: 5rem;
+}
+#game-hud .game-menu {
+  position: absolute;
+  right: 5rem;
 }

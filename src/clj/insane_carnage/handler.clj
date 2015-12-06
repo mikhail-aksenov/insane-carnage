@@ -79,6 +79,12 @@
   (let [player-id (get-player-id ring-req)]
     (game/unbind-player-from-game player-id)))
 
+(defmethod event-msg-handler :player/process-direction
+  [{:as ev-msg :keys [event id ring-req ?reply-fn]}]
+  (let [player-id (get-player-id ring-req)
+        {:keys [dir add?]} event]
+    (game/process-direction player-id dir add?)))
+
 (defmethod event-msg-handler :default                       ; Fallback
   [{:as ev-msg :keys [event id ?data ring-req ?reply-fn send-fn]}]
   (let [session (:session ring-req)

@@ -1,6 +1,7 @@
 (ns insane-carnage.game
   (:require [reagent.session :as session]
             [accountant.core :as accountant]
+            [clojure.string :as str]
             [insane-carnage.db :refer [db]]
             [insane-carnage.talk :refer [chsk-send!]]))
 
@@ -47,7 +48,29 @@
 (defn quit-game []
   (println "Quit game")
   (chsk-send! [:game/quit])
-  (reset))
+  (accountant/navigate! "/"))
+
+(defn key-code->direction [code]
+  (case code
+    37 :left
+    38 :up
+    39 :right
+    40 :down
+    nil))
+
+(defn on-keydown [e]
+  (js/console.log "keydown" e)
+  (let [dir (key-code->direction (.-keyCode e))]
+    (chsk-send! [:player/process-direction
+                 {:dir dir
+                  :add? true}])))
+
+(defn on-keyup [e]
+  (let [dir (key-code->direction (.-keyCode e))]
+    (chsk-send! [:player/remove-direction
+                 {:dir dir
+                  :add? false}])))
+
 
 ;; ----------
 ;; Rendering
@@ -76,22 +99,29 @@
             :width  tile-size
             :height tile-size}]))
 
-(defn sight-circle [sight]
-  (let [r (* tile-size sight)]
-    [:circle {:class "sight-circle"
-              :cx    r
-              :cy    r
-              :r     r
-              :mask  "url(#sight-grad"}]))
-
 (defn render-hud [game player]
-  [:div#game-hud
-   [:div.player-state
-    [:div (str "HP" (:hp player))]]
-   [:div.game-menu
-    [:button.btn.btn-default
-     {:on-click quit-game}
-     "Quit"]]])
+  (let [{:keys [hp max-hp]} player
+        hp-percent (* 100 (/ hp max-hp))]
+    [:div#game-hud
+     [:div.player-state
+      [:div "HP"]
+      [:div.progress
+       [:div {:style         {:width (str hp-percent "%")}
+              :role          "progressbar"
+              :aria-valuenow hp
+              :aria-valuemin 0
+              :aria-valuemax max-hp
+              :class         (str "progress-bar progress-bar-"
+                                  (condp < hp-percent
+                                    60 "success"
+                                    30 "warning"
+                                    0 "danger"))}
+        ;hp
+        ]]]
+     [:div.game-menu
+      [:button.btn.btn-default
+       {:on-click quit-game}
+       "Quit"]]]))
 
 (defn- seen? [{:keys [left right top bottom] :as visible-bounds} x y]
   (and (>= x left)
@@ -99,7 +129,9 @@
        (>= y top)
        (<= y bottom)))
 
-(defn render-players [players visible-bounds]
+(defn render-players [{:keys [player-id] :as db}
+                      {:keys [players] :as game}
+                      visible-bounds]
   (for [[id player] players
         :let [{:keys [x y]} player
               [w h] (to-view x y)
@@ -109,7 +141,10 @@
               :cx    (+ w hs)
               :cy    (+ h hs)
               :r     hs
-              :class "player"}]))
+              :class (str/join " "
+                               (cond-> ["player"]
+                                       (= player-id (:player-id player)) (conj "you")
+                                       (:player-id player) (conj "live")))}]))
 
 (defn top-transform [{:keys [x y] :as player} sight]
   (let [w (* tile-size x)
@@ -127,7 +162,34 @@
              :width  (* sight tile-size 2)
              :height (* sight tile-size 2)}])
 
-(defn render-field []
+(defn svg-defs [player sight]
+  [:defs
+   [:radialGradient#sight-grad {:cx "50%"
+                                :cy "50%"
+                                :r  "50%"
+                                :fx "50%"
+                                :fy "50%"}
+    [:stop {:offset 0.75
+            :style  {:stop-color   "white"
+                     :stop-opacity "1"}}]
+    [:stop {:offset 1
+            :style  {:stop-color   "black"
+                     :stop-opacity "0"}}]]
+   [:mask#sight-mask
+    [:circle {:cx   (* (:x player) tile-size)
+              :cy   (* (:y player) tile-size)
+              :r    (* sight tile-size)
+              :fill "url(#sight-grad)"}]]])
+
+(defn reg-keyboard []
+  (js/window.addEventListener "keydown" on-keydown)
+  (js/window.addEventListener "keyup" on-keyup))
+
+(defn unreg-keyboard []
+  (js/window.removeEventListener "keydown" on-keydown)
+  (js/window.removeEventListener "keyup" on-keyup))
+
+(defn render-field* []
   (let [{:keys [game player-id game-player-id]} @db
         {:keys [sight players]} game
         player (get-in game [:players game-player-id])
@@ -136,29 +198,17 @@
     [:div#game-field
      [:svg {:width  600
             :height 600}
-      [:defs                                                ;{:dangerouslySetInnerHTML {:__html (svg-defs sight)}}
-       [:radialGradient#sight-grad {:cx "50%"
-                                    :cy "50%"
-                                    :r  "50%"
-                                    :fx "50%"
-                                    :fy "50%"}
-        [:stop {:offset 0.75
-                :style  {:stop-color   "white"
-                         :stop-opacity "1"}}]
-        [:stop {:offset 1
-                :style  {:stop-color   "black"
-                         :stop-opacity "0"}}]]
-       [:mask#sight-mask
-        [:circle {:cx   (* (:x player) tile-size)
-                  :cy   (* (:y player) tile-size)
-                  :r    (* sight tile-size)
-                  :fill "url(#sight-grad)"}]]]
-      (render-bg-rect sight)
+      (svg-defs player sight)
       [:g {:transform (top-transform player sight)
            :style     {:mask "url(#sight-mask)"}}
        [:g.tile-group
         (render-tiles game visible-bounds)]
        [:g.player-group
-        (render-players players visible-bounds)]]]
+        (render-players @db game visible-bounds)]]]
      (render-hud game player)
      ]))
+
+(def render-field
+  (with-meta render-field*
+             {:component-did-mount    reg-keyboard
+              :component-will-unmount unreg-keyboard}))

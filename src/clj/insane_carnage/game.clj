@@ -1,11 +1,12 @@
 (ns insane-carnage.game
-  (:require [clojure.tools.logging :as log]))
+  (:require [clojure.tools.logging :as log]
+            [insane-carnage.engine :as engine]))
 
 (defn uuid [] (str (java.util.UUID/randomUUID)))
 
 (def server-state
   (atom
-    {:games {}
+    {:games   {}
      :players {}}))
 
 (defn- generate-players [width height cnt]
@@ -18,10 +19,11 @@
          (map (fn [[x y]]
                 (let [id (uuid)]
                   [id
-                   {:x  x
-                    :y  y
-                    :id id
-                    :hp 100}])))
+                   {:x      x
+                    :y      y
+                    :id     id
+                    :hp     100
+                    :max-hp 100}])))
          (shuffle)
          (into {}))))
 
@@ -38,7 +40,7 @@
       })))
 
 (defn- ensure-player [state player-id player-name]
-  (assoc-in state [:players player-id] {:player-id player-id
+  (assoc-in state [:players player-id] {:player-id   player-id
                                         :player-name player-name}))
 
 (defn find-available-game-player [state game-id]
@@ -111,3 +113,11 @@
                   (dissoc [:players player-id :game-id])
                   (dissoc [:players player-id :game-player-id])
                   (dissoc [:games game-id :players game-player-id :player-id]))))))
+
+(defn process-direction [player-id dir add?]
+  (let [player (get-in @server-state [:players player-id])
+        game (get-in @server-state [:games (:game-id player)])]
+    (if add?
+      nil                                                   ;(engine/add-direction game player dir)
+      nil                                                   ;(engine/remove-direction game player dir)
+      )))
