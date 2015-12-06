@@ -24,11 +24,8 @@
                  ;[com.taoensso/sente "1.6.0"]
                  [com.taoensso/sente "1.7.0-RC1"]
                  [org.clojure/tools.logging "0.3.1"]
-<<<<<<< HEAD
                  [org.clojure/core.async "0.2.374"]
-=======
                  [clj-time "0.11.0"]
->>>>>>> master
                  ]
 
   :plugins [[lein-environ "1.0.1"]
