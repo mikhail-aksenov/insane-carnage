@@ -4,7 +4,9 @@
             [accountant.core :as accountant]
             [clojure.string :as str]
             [insane-carnage.db :refer [db]]
-            [insane-carnage.talk :refer [chsk-send!]]))
+            [insane-carnage.talk :refer [chsk-send!]]
+            [cljs-time.core :as time]
+            [insane-carnage.engine :as engine]))
 
 (defn find-your-game-player [game]
   (let [player-id (:player-id @db)]
@@ -65,7 +67,7 @@
                    83 :backward                             ; s
                    nil)]
       {:state :move
-       :dir dir})))
+       :dir   dir})))
 
 (defn on-keydown [e]
   (js/console.log "keydown" e)
@@ -147,34 +149,61 @@
     [-1 0] -90
     [-1 1] -45))
 
-(defn player-dir [player]
-  (let [ts2 (* tile-size 2)
-        rx (* ts2 (js/Math.cos (/ js/Math.PI 3)))
-        ry (* ts2 (js/Math.sin (/ js/Math.PI 3)))
+(defn circle-segment-d [cx cy r angle]
+  (let [rx (* r (js/Math.sin angle))
+        ry (* r (js/Math.cos angle))
         p1 [rx ry]
         p2 [(- rx) ry]]
-    [:path.player-dir {:d (str "M0 0"
-                               "L" (first p1) " " (last p1)
-                               "Q0 " (+ half-tile-size tile-size) " " (first p2) " " (last p2)
-                               "z")}]))
+    (str "M0 0"
+         "L" (first p2) " " (last p2)
+         "A" r " " r " " 0 " " 0 " " 0 " " (first p1) " " (last p1)
+         "z")))
+
+(defn player-dir [player]
+  [:path.player-dir {:d (circle-segment-d 0 0 (* tile-size 2) (/ js/Math.PI 6))}])
+
+(defmulti render-hit :type)
+
+(defmethod render-hit :swordsman [player]
+  [:path.hit {:d (circle-segment-d 0 0 (* tile-size 1.5) (/ js/Math.PI 4))}])
+
+(defmethod render-hit :pikeman [player]
+  (let [shown? (atom false)]
+    (fn []
+      (if shown?
+        [:path]
+        (do
+          (reset! shown? false)
+          [:path.hit {:d (circle-segment-d 0 0 (* tile-size 2.5) (/ js/Math.PI 12))}])))))
+
+(defn show-hit? [{:keys [type last-hit-at] :as player} time-passed]
+  (let [time-since-hit (- time-passed last-hit-at)
+        hit-duration (get-in engine/hits-meta [type :duration])]
+    (if (> hit-duration time-since-hit)
+      (render-hit player)
+      [:path])))
+
+(defn render-hit-general [player time-passed]
+  (when (show-hit? player time-passed)
+    (render-hit player)))
 
 (defn render-players [{:keys [player-id] :as db}
-                      {:keys [players] :as game}
-                      visible-bounds]
+                      {:keys [players game-started] :as game}
+                      visible-bounds
+                      time-passed]
   (for [[id player] players
         :let [{:keys [x y]} player
               [w h] (to-view x y)]
         :when (seen? visible-bounds x y)]
     [:g {:key       id
          :transform (str "translate(" (+ w half-tile-size) " " (+ h half-tile-size) ")"
-                         "rotate(" (player-rotation player) ")"
-                         )
+                         "rotate(" (player-rotation player) ")")
          :class     (str/join " "
                               (cond-> ["player"]
                                       (= player-id (:player-id player)) (conj "you")
                                       (:player-id player) (conj "live")))}
      (player-dir player)
-     ;[:rect {:x 0 :y 0 :width tile-size :height tile-size}]
+     (render-hit-general player time-passed)
      [:circle.player-icon {:r half-tile-size}]]))
 
 (defn top-transform [{:keys [x y] :as player} sight]
@@ -234,11 +263,16 @@
          [:div.col-xs-10 message]])
       log)]])
 
+(defn get-passsed-time [game]
+  (- (.getTime (js/Date.))
+     (.getTime (js/Date. (:game-started game)))))
+
 (defn render-field* []
   (let [{:keys [game player-id game-player-id]} @db
         {:keys [sight players]} game
         player (get-in game [:players game-player-id])
-        visible-bounds (get-visible-bounds game player)]
+        visible-bounds (get-visible-bounds game player)
+        time-passed (get-passsed-time game)]
     (println "render-field player" game-player-id player)
     [:div#game-field
      [:svg {:width  600
@@ -249,7 +283,7 @@
        [:g.tile-group
         (render-tiles game visible-bounds)]
        [:g.player-group
-        (render-players @db game visible-bounds)]]]
+        (render-players @db game visible-bounds time-passed)]]]
      (render-hud game player)
      (render-log (:game-started game) (:log game))
      ]))

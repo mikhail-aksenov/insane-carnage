@@ -15,6 +15,8 @@
 (def server-state
   (atom init-state))
 
+(def game-chan)
+
 (defn reset-all! []
   (reset! server-state init-state))
 
@@ -25,8 +27,8 @@
                         (= 1 y)))]
     [(dec x) (dec y)]))
 
-(defn random-direction []
-  (rand-nth valid-directions))
+(def unit-types [:swordsman
+                 :pikeman])
 
 (defn- generate-players [width height cnt]
   (let [all-positions (for [w (range width)
@@ -34,19 +36,19 @@
         positions (->> all-positions
                        (shuffle)
                        (take cnt))]
-
     (->> positions
          (map (fn [[x y]]
                 (let [id (uuid)]
                   [id
-                   {:x         x
-                    :y         y
-                    :id        id
-                    :hp        100
-                    :max-hp    100
-                    :direction (random-direction)
-                    :state     :moving
-                    :type      :swardsman}])))
+                   {:x           x
+                    :y           y
+                    :id          id
+                    :hp          100
+                    :max-hp      100
+                    :last-hit-at 0
+                    :direction   (rand-nth valid-directions)
+                    :state       (rand-nth [:moving :staying])
+                    :type        (rand-nth unit-types)}])))
          (shuffle)
          (into {}))))
 
@@ -64,14 +66,14 @@
    (let [width 100
          height 100
          ts (time/now)]
-     {:game-id game-id
-      :width   width
-      :height  height
-      :sight   15
-      :players (generate-players width height 30)
+     {:game-id      game-id
+      :width        width
+      :height       height
+      :sight        15
+      :players      (generate-players width height 30)
       :game-started (str ts)
-      :log     [{:ts      (format-log-time ts ts)
-                 :message "Game started"}]
+      :log          [{:ts      (format-log-time ts ts)
+                      :message "Game started"}]
       })))
 
 (defn- ensure-player [state player-id player-name]
