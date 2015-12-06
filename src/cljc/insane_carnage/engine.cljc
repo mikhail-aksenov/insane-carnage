@@ -82,10 +82,10 @@
   (let [prohibited-positions (into []
                                    (concat (->positions players)
                                            (->positions attacked-fields)))
-        position]
+        position 0]
   { player-id { :position { :x :y }
 
-               }})
+               }}))
 
 (defn player-move [old-pos move]
   (let [[dx dy] (direction-map move)
