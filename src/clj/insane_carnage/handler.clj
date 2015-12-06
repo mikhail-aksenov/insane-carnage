@@ -61,6 +61,7 @@
   (log/debug "Event: %s" event)
   (event-msg-handler ev-msg))
 
+
 (defn- get-player-id [ring-req]
   (get-in ring-req [:cookies "player-id" :value]))
 
