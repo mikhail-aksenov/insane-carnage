@@ -54,28 +54,68 @@ a:hover {
   stroke: white;
 }
 #game-field .player {
-  fill: #CFD8DC;
   transition: all 0.2s ease;
 }
-#game-field .player.live {
+#game-field .player .player-icon {
+  fill: #CFD8DC;
+}
+#game-field .player.live .player-icon {
   fill: #ef9a9a;
 }
-#game-field .player.live.you {
+#game-field .player.live.you .player-icon {
   fill: #80DEEA;
+}
+#game-field .player .player-dir {
+  fill: url(#player-sight-grad);
+}
+#game-field stop.transparent {
+  stop-opacity: 0;
 }
 #game-hud {
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
-  margin: 5rem 0;
+  margin: 3rem 0;
 }
 #game-hud .player-state {
   position: absolute;
   width: 15rem;
-  left: 5rem;
+  left: 3rem;
 }
 #game-hud .game-menu {
   position: absolute;
-  right: 5rem;
+  right: 3rem;
+}
+#log-header button {
+  margin-left: 1rem;
+}
+#battle-log {
+  position: fixed;
+  padding: 1rem;
+  width: 40rem;
+  height: 23rem;
+  bottom: 3rem;
+  overflow: hidden;
+  opacity: 0.3;
+  flex-direction: column;
+  display: flex;
+  transition: all 0.2s ease;
+}
+#battle-log:hover {
+  opacity: 0.8;
+}
+#battle-log.log-hidden {
+  height: 11rem;
+}
+#log-entries {
+  flex-grow: 1;
+  background-color: #80CBC4;
+  bottom: 0;
+  overflow-y: scroll;
+  width: 100%;
+}
+#log-entries .ts {
+  color: #1976D2;
+  font-weight: bold;
 }

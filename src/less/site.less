@@ -63,30 +63,84 @@ a:hover {
     }
 
     .player {
-        fill: #CFD8DC;
+        .player-icon { fill: #CFD8DC; }
         transition: all 0.2s ease;
 
-        &.live { fill: #ef9a9a; }
+        &.live {
+            .player-icon { fill: #ef9a9a; }
+        }
 
-        &.live.you { fill: #80DEEA; }
+        &.live.you {
+            .player-icon { fill: #80DEEA; }
+        }
+
+        .player-dir {
+            // fill: #FF5722;
+            fill: url(#player-sight-grad);
+            // opacity: 0.5;
+        }
+    }
+
+    stop.transparent {
+        stop-opacity: 0;
     }
 }
+
+@hud-padding: 3rem;
 
 #game-hud {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
-    margin: 5rem 0;
+    margin: @hud-padding 0;
 
     .player-state {
         position: absolute;
         width: 15rem;
-        left: 5rem;
+        left: @hud-padding;
     }
 
     .game-menu {
         position: absolute;
-        right: 5rem;
+        right: @hud-padding;
+    }
+}
+
+#log-header button {
+    margin-left: 1rem;
+}
+
+#battle-log {
+    position: fixed;
+    padding: 1rem;
+    width: 40rem;
+    height: 23rem;
+    bottom: @hud-padding;
+    overflow: hidden;
+    opacity: 0.3;
+    flex-direction: column;
+    display: flex;
+    transition: all 0.2s ease;
+
+    &:hover {
+        opacity: 0.8;
+    }
+
+    &.log-hidden {
+        height: 11rem;
+    }
+}
+
+#log-entries {
+    flex-grow: 1;
+    background-color: #80CBC4;
+    bottom: 0;
+    overflow-y: scroll;
+    width: 100%;
+
+    .ts {
+        color: #1976D2;
+        font-weight: bold;
     }
 }

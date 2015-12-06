@@ -24,6 +24,7 @@
                  ;[com.taoensso/sente "1.6.0"]
                  [com.taoensso/sente "1.7.0-RC1"]
                  [org.clojure/tools.logging "0.3.1"]
+                 [clj-time "0.11.0"]
                  ]
 
   :plugins [[lein-environ "1.0.1"]
