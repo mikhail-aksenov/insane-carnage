@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 (ns insane-carnage.engine
   #?(:clj (:require [clojure.core.async :refer [go-loop]])
      :cljs (:require-macros [cljs.core.async.macros :refer [go-loop]]))
@@ -104,3 +105,7 @@
 
 
       (recur))))
+=======
+(ns insane-carnage.engine)
+
+>>>>>>> master

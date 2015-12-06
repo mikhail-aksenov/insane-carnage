@@ -2,7 +2,8 @@
   (:use insane-carnage.handler
         ring.server.standalone
         [ring.middleware file-info file]
-        [org.httpkit.server :as http-kit :refer [run-server]]))
+        [org.httpkit.server :as http-kit :refer [run-server]]
+        [insane-carnage.game :as game]))
 
 (defonce server (atom nil))
 
@@ -47,6 +48,11 @@
   ;; and http://http-kit.org/migration.html#reload
   (start-router!)
   (reset! server (run-server #'app {:port 3000})))
+
+(defn reset []
+  (game/reset-all!)
+  (stop-server)
+  (start-server))
 
 ;(defn stop-server []
 ;  (.stop @server)
