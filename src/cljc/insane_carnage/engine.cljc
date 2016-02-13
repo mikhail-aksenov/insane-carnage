@@ -7,274 +7,288 @@
                 :cljs cljs.core.async) :as async :refer [<! >! chan close! put! to-chan]]
             [#?(:clj  clj-time.core
                 :cljs cljs-time.core) :as time]
-            [clojure.data :refer [diff]]))
+            [clojure.data :refer [diff]]
+            [medley.core :refer [filter-vals remove-vals map-vals drop-upto dissoc-in]]))
 
-;; Game map structure
-;; { :game-id guid
-;;   :players {
-;;     :player-id {
-;;       :position {
-;;       }
-;;       :direction _
-;;     :health
-;;     }
-;;   }
-;;   :attacked-fields {
-;;     :player-id {
-;;       :position {
-;;         :x _
-;;         :y _
-;;       }
-;;
-;;
-;;     }
-;;   }
-;;   :status :finished OR :in-progress
-;; }
-;;
+;; Definitions
 
-(declare process-all-moves)
+(def tick-duration 100)
 
-(defonce input-channel (chan))
+(def possible-moves
+  #{:none :hit :move-ahead :move-back :turn-left :turn-right})
 
-(def game-channels (atom {}))
-(def games (atom {}))
-(def loop-msecs 10000)
+(def unit-types
+  {:swordsman {:hit-damage    15
+               :move-duration 4
+               :hit-duration  5
+               :sight         20
+               :hit-cells
+                              (fn [{:keys [x y direction]}]
+                                (let [local
+                                      (case direction
+                                        [0 1] [[-1 1] [0 1] [1 1]]
+                                        [1 1] [[0 1] [1 1] [1 0]]
+                                        [1 0] [[1 1] [1 0] [1 -1]]
+                                        [1 -1] [[1 0] [1 -1] [0 -1]]
+                                        [0 -1] [[1 -1] [0 -1] [-1 -1]]
+                                        [-1 -1] [[0 -1] [-1 -1] [-1 0]]
+                                        [-1 0] [[-1 -1] [-1 0] [-1 1]]
+                                        [-1 1] [[-1 0] [-1 1] [0 1]])]
+                                  (mapv #(mapv + %1 [x y]) local)))}
+   :pikeman   {:hit-damage    10
+               :move-duration 7
+               :hit-duration  10
+               :sight         20
+               :hit-cells
+                              (fn [{:keys [x y direction]}]
+                                [direction
+                                 (mapv #(* 2) direction)])}
+   :bowman    {:hit-damage        20
+               :move-duration     3
+               :hit-duration      30
+               :sight             30
+               :hit-move-duration 1
+               :hit-cells
+                                  (fn [{:keys [x y]}]
+                                    [x y])}})
 
-(defn register-game [game]
-  (let [game-id (:game-id game)]
-    (when-not (@game-channels game-id)
-      (swap! games assoc game-id game)
-      (swap! game-channels assoc game-id {:in (chan) :out (chan)}))))
-
-(defn unregister-game [game-id]
-  (do
-    (when-let [chans (@game-channels game-id)]
-      (async/close! (:in chans))
-      (async/close! (:out chans)))
-    (swap! game-channels dissoc game-id)))
-
-(defn start-engine []
-  (go
-    (while true
-      (let [message (<! input-channel)
-            {:keys [game-id msg]} message]
-        (when-let [ch (get-in @game-channels [game-id :in])]
-          (>! ch msg))))))
-
-(defn current-time-millis []
-  #?(:clj  (System/currentTimeMillis)
-     :cljs (.getTime (js/Date.))))
-
-(defn consume-out [game-id]
-  (when-let [ch (get-in @game-channels [game-id :out])]
-    (go-loop []
-             (when-let [v (<! ch)]
-               (println v (current-time-millis))
-               (recur)))))
-
-(defn game-in-progress? [game-id]
-  (= (get-in @games [game-id :status]) :in-progress))
-
-(defn update-game [game-id]
-  (let [old-game (get @games game-id)
-        new-game (process-all-moves game-id)
-        [_ upd-chunk _] (diff old-game new-game)
-        out-events (get-in @game-channels [game-id :out])]
-    (put! out-events {:game-id game-id
-                      :update upd-chunk})))
-
-(defn game-loop [game-id]
-  (let [in-events (get-in @game-channels [game-id :in])
-        out-events (get-in @game-channels [game-id :out])]
-    (go
-      (while (game-in-progress? game-id)
-        (let [msg (<! in-events)]
-          (when (= (:tick msg) (get-in @games [game-id :tick]))
-            ;(println "Player action")
-            (update-game game-id)))))
-    (go
-      (while (game-in-progress? game-id)
-        (<! (async/timeout loop-msecs))
-        (swap! games update-in [game-id :tick] inc)
-        (>! out-events {:game-id game-id :msg (get-in @games [game-id :tick])})))))
-
-;(register-game 1)
-(start-engine)
-;(consume-out 1)
-;(game-loop 1)
-
-;; ----------------
-;; Move
-
-(defn- keep-in-range [n min max]
-  (max min (min max n)))
-
-(def cw-directions [[0 1]
-                    [1 1]
-                    [1 0]
-                    [1 -1]
-                    [0 -1]
-                    [-1 -1]
-                    [-1 0]
-                    [-1 1]])
-
-(defn- index-of [x coll]
-  (->> coll
-       (keep-indexed
-         (fn [idx v]
-           (when (= v x) idx)))
-       (first)))
-
-(defn log-info [& args]
-  #?(:clj  (log/info args)
-     :cljs (apply println args)))
-
-(defn neighbor-direction [direction offset]
-  (log-info "neighbor-direction" direction offset cw-directions)
-  (let [idx (index-of direction cw-directions)
-        cnt (count cw-directions)
-        nidx (+ idx offset)
-        nidx (cond
-               (> nidx cnt) (- nidx cnt)
-               (< nidx 0) (+ nidx cnt)
-               :else nidx)]
-    (get cw-directions nidx)))
-
-(defn turn-player [game game-player turn-direction]
-  (let [{:keys [direction]} game-player
-        new-dir (case turn-direction
-                  :left (neighbor-direction direction -1)
-                  :right (neighbor-direction direction 1))]
-    (assoc-in game [:players (:id game-player) :direction] new-dir)))
-
-(defn move-player [game game-player direction]
-  (update-in game
-             [:players (:id game-player)]
-             assoc
-             :state :moving
-             :move-direction (case direction
-                               :forward 1
-                               :backward -1)))
-
-(defn stop-player [game game-player]
-  (assoc-in game
-            [:players (:id game-player)]
-            :staying))
-
-(defn process-player-move [game game-player]
-  (let [{:keys [width height]} game
-        {:keys [x y direction move-direction id]} game-player
-        [nx ny] (->> direction
-                     (map #(* % move-direction))
-                     (map + [x y]))
-        [nx ny] [(keep-in-range nx 0 width)
-                 (keep-in-range ny 0 height)]]
-    (update-in game
-               [:players id]
-               assoc
-               :x nx
-               :y ny)))
-
-(defn process-all-moves [game-id]
-  (let [game (get @games game-id)]
-    (reduce
-      process-player-move
-      game
-      (->> game :players vals))))
-
-;; ----------------
-;; Hit
-
-(defn interval-in-ms [time1 time2]
-  (- time2 time1))
-
-(def hits-meta
-  {:swordsman {:damage 40 :duration 125}
-   :pikemane  {:damage 30 :duration 125}})
-
-(defn player-alive? [player]
-  (pos? (:hp player)))
-
-(defmulti get-hit-shape :type)
-
-(defmethod get-hit-shape :swordsman [player]
-  (let [{:keys [x y direction]} player
-        side-hits (case direction
-                    [0 1] [[-1 1] [1 1]]
-                    [1 1] [[0 1] [1 0]]
-                    [1 0] [[1 1] [1 -1]]
-                    [1 -1] [[1 0] [0 -1]]
-                    [0 -1] [[1 -1] [-1 -1]]
-                    [-1 -1] [[0 -1] [-1 0]]
-                    [-1 0] [[-1 -1] [-1 1]]
-                    [-1 1] [[-1 0] [0 1]])
-        hits (conj side-hits direction)
-        abs-hits (for [[xx yy] hits]
-                   [(+ x xx) (+ y yy)])]
-    abs-hits))
-
-(defmethod get-hit-shape :pikeman [player]
-  (let [{:keys [x y direction]} player
-        hits [direction
-              (mapv #(* 2 %) direction)]
-        abs-hits (for [[xx yy] hits]
-                   [(+ x xx) (+ y yy)])]
-    abs-hits))
-
-(defn player-at-hit? [hit-shape {:keys [x y] :as player}]
-  (hit-shape [x y]))
-
-(defn players-at-hit [players hit-shape]
-  (->> players
-       (vals)
-       (filter #(and (player-alive? %)
-                     (player-at-hit? hit-shape %)))))
-
-(defn apply-hit-all-affected [game players damage]
-  (reduce
-    (fn [g player]
-      (update-in g
-                 [:players (:player-id player) :hp]
-                 #(max 0 (- % damage))))
-    game
-    players))
-
-(defn update-hit-time [game player ts]
-  (assoc-in game [:players (:player-id player) :last-hit-at] ts))
-
-(defn can-hit? [player ts {:keys [duration]}]
-  (let [interval (interval-in-ms (:last-hit-at player) ts)]
-    (> interval duration)))
-
-(defn process-hit [game player ts]
-  (let [{:keys [damage] :as hit-meta} (get hits-meta (:type player))]
-    (when (can-hit? player ts hit-meta)
-      (let [{:keys [players]} game
-            hit-shape (set (get-hit-shape player))
-            affected-players (players-at-hit players hit-shape)]
-        (-> game
-            (apply-hit-all-affected affected-players damage)
-            (update-hit-time player ts))))))
+(def possible-directions
+  [[0 1]
+   [1 1]
+   [1 0]
+   [1 -1]
+   [0 -1]
+   [-1 -1]
+   [-1 0]
+   [-1 1]])
 
 ;; --------
-;; Actions
+;; Common
 
-(defn get-game-player [game {:keys [game-player-id] :as player}]
-  (get-in game [:players game-player-id]))
+(defn unit-meta [type]
+  (get unit-types type))
 
-(defmulti process-action
-          (fn [game player action] (:type action)))
+(defn- trim-to-bounds [top right bot left [x y :as cell]]
+  [(min right (max x left))
+   (min bot (max y top))])
 
-(defmethod process-action :hit [game player action]
-  (let [ts (current-time-millis)]
-    (process-hit game player ts)))
+(defn- prev-direction [dir]
+  (or
+    (->> possible-directions
+         (take-while #(not= dir %))
+         (last))
+    (last possible-directions)))
 
-(defmethod process-action :turn [game player action]
-  (turn-player game (get-game-player game player) (:direction action)))
+(defn- next-direction [dir]
+  (or
+    (->> possible-directions
+         (drop-upto #(= dir %))
+         (first))
+    (first possible-directions)))
 
-(defmethod process-action :move [game player action]
-  (move-player game (get-game-player game player) (:direction action)))
+(defn game-player-ids [{:keys [units]}]
+  {:pre [units (map? units)]}
+  (->> units
+       (filter-vals :player-id)
+       (vals)
+       (map :player-id)))
 
-(defmethod process-action :stop [game player action]
-  (stop-player game (get-game-player game player)))
+(defn dead? [unit]
+  (not (pos? (:hp unit))))
+
+;; --------
+;; Hits
+
+(defn- new-hit [unit tick]
+  (let [meta (get unit-types type)]
+    {:moved-at   tick
+     :started-at tick
+     :x          (:x unit)
+     :y          (:y unit)
+     :direction  (:direction unit)}))
+
+(defn- can-hit? [unit meta tick]
+  (let [hit (:hit unit)]
+    (or hit
+        (> (- tick (:started-at hit)) (:hit-duration meta)))))
+
+(defn- make-hit [unit meta tick]
+  ;(println "make-hit" unit meta tick)
+  (if (can-hit? unit meta tick)
+    (assoc unit :hit (new-hit unit tick))
+    unit))
+
+(defn- cells-bounds [fcell & cells]
+  (let [[fx fy] fcell]
+    (reduce
+      (fn [[top right bot left] [x y]]
+        [(min top y)
+         (max right x)
+         (max bot y)
+         (min left x)])
+      [fy fx fy fx]
+      cells)))
+
+(defn- in-bounds? [bounds cell]
+  (let [[top right bot left] bounds
+        [x y] cell]
+    (and (y >= top)
+         (x <= right)
+         (y <= bot)
+         (x >= left))))
+
+(defn- hit-collides-unit? [hit-cell-set unit]
+  (get hit-cell-set [(:x unit) (:y unit)]))
+
+(defn- hit-hurt-victims [hit-cells units]
+  (let [collider (partial hit-collides-unit? (set hit-cells))]
+    (filter-vals collider units)))
+
+(defn- apply-hit [meta unit]
+  (update unit :hp - (:hit-damage meta)))
+
+(defn- process-hit [game offender]
+  {:pre [(:units game)]
+   :post [(:units %)]}
+  (let [tick (:tick game)
+        hit (:hit offender)
+        units (:units game)
+        meta (get unit-types (:type offender))
+        over? (> (- tick (:moved-at hit)) (:hit-duration meta))]
+    (if over?
+      (dissoc-in game [:units (:id offender) :hit])
+      (let [other-units (dissoc units (:id offender))
+            hit-cells ((:hit-cells meta) hit)
+            victim-ids (keys (hit-hurt-victims hit-cells other-units))
+            apply-hit (partial apply-hit meta)
+            next-units
+            (reduce
+              (fn [units victim-id]
+                (update units victim-id apply-hit))
+              units
+              victim-ids)]
+        (assoc game :units next-units)))))
+
+(defn- process-all-hits [game]
+  {:pre [(:units game)]
+   :post [(:units %)]}
+  (reduce
+    (fn [game [_ unit]]
+      (if (:hit unit)
+        (process-hit game unit)
+        game))
+    game
+    (:units game)))
+
+;; --------
+;; Move
+
+(defn process-moveable [moveable move-duration game]
+  (let [{:keys [x y direction move moved-at]} moveable
+        {:keys [width height tick]} game]
+    (if-not (>= (- tick moved-at) move-duration)
+      moveable
+      (cond
+        (get #{:move-ahead :move-back} move)
+        (let [shifted (if (= move :move-ahead)
+                        (map + [x y] direction)
+                        (map - [x y] direction))
+              [nx ny] (trim-to-bounds 0 width height 0 shifted)]
+          (assoc moveable
+            :x nx
+            :y ny
+            :moved-at tick))
+        (get #{:turn-left :turn-right} move)
+        (let [new-dir (if (= move :turn-right)
+                        (prev-direction direction)
+                        (next-direction direction))]
+          (assoc moveable
+            :direction new-dir
+            :moved-at tick))
+        :else moveable))))
+
+(defmulti process-hit-move
+          (fn [unit meta game] (:type unit)))
+
+(defmethod process-hit-move :default [unit {:keys [hit-move-duration]} game]
+  (if (pos? hit-move-duration)
+    (update unit :hit process-moveable hit-move-duration game)
+    unit))
+
+(defn- process-unit-move [unit game]
+  {:pre [(:id unit)]
+   :post [(:id unit)]}
+  (if (dead? unit)
+    unit
+    (let [meta (get unit-types (:type unit))
+          move (:move unit)
+          moved-unit
+          (cond
+            (= :hit move) (make-hit unit meta (:tick game))
+            (not= :none move) (process-moveable unit (:move-duration meta) game)
+            :else unit)]
+      (if-not (:hit unit)
+        moved-unit
+        (update moved-unit :hit process-hit-move meta game)))))
+
+(defn- process-all-moves [{:keys [units] :as game}]
+  (let [next-units (->> units
+                        (map-vals
+                          #(process-unit-move % game)))]
+    (assoc game :units next-units)))
+
+;; --------
+;; Game state
+
+(defn- all-dead? [units]
+  (every?
+    (fn [[_ unit]]
+      (not (pos? (:hp unit))))
+    units))
+
+(defn- no-live-players? [units]
+  (every?
+    (fn [[_ unit]]
+      (not (:player-id unit)))
+    units))
+
+(defn- update-state [game]
+  {:pre [(:units game)]
+   :post [(:units %)]}
+  (let [units (:units game)
+        all-dead (all-dead? units)
+        no-live-players (no-live-players? units)
+        game-over? (or all-dead no-live-players)]
+    (cond-> game
+            game-over?
+            (assoc :state :finished
+                   :finished-at (time/now)))))
+
+;; --------
+;; Api
+
+(defn log-live-units [game]
+  (->> (:units game)
+       (vals)
+       ;(filter :player-id)
+       (filter #(= :move-back (:move %))) (take 1)
+       (map
+         #(println "Player" (select-keys % [:player-id :x :y :move :direction :type])))
+       (doall))
+  game)
+
+(defn process-tick [game tick]
+  {:pre [(> tick (:tick game))]}
+  (let [next-game (-> game
+                      (assoc :tick tick)
+                      ;(process-ai)
+                      (process-all-moves)
+                      (process-all-hits)
+                      (update-state)
+                      ;(log-live-units)
+                      )]
+    next-game))
+
+(defn set-unit-move [game unit-id move]
+  {:pre [(get possible-moves move)]}
+  (assoc-in game [:units unit-id :move] move))

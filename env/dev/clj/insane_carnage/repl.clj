@@ -3,8 +3,8 @@
         ring.server.standalone
         [ring.middleware file-info file]
         [org.httpkit.server :as http-kit :refer [run-server]]
-        ;[insane-carnage.engine :as engine]
-        [insane-carnage.game :as game]))
+        [clojure.core.async :refer [go-loop go <! >! chan close! put! to-chan]]
+        [clojure.tools.logging :as log]))
 
 (defonce server (atom nil))
 
@@ -39,7 +39,7 @@
   (when-not (nil? @server)
     ;; graceful shutdown: wait 100ms for existing requests to be finished
     ;; :timeout is optional, when no timeout, stop immediately
-    (stop-router!)
+    (stop-app!)
     (@server :timeout 100)
     (reset! server nil)))
 
@@ -47,13 +47,14 @@
   ;; The #' is useful when you want to hot-reload code
   ;; You may want to take a look: https://github.com/clojure/tools.namespace
   ;; and http://http-kit.org/migration.html#reload
-  (start-router!)
+  (start-app!)
   (reset! server (run-server #'app {:port 3000})))
 
 (defn reset []
-  (game/reset-all!)
+  (stop-app!)
   (stop-server)
-  (start-server))
+  (start-server)
+  (start-app!))
 
 ;(defn stop-server []
 ;  (.stop @server)

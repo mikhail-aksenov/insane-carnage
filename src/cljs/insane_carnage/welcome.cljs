@@ -7,19 +7,13 @@
             [insane-carnage.game :as game]))
 
 (defn start-new-game []
-  (accountant/navigate! "/game/new")
-  ;(game/join "new")
-  )
+  (game/join! "new"))
 
 (defn join-random-game []
-  (accountant/navigate! "/game/random")
-  ;(game/join "random")
-  )
+  (game/join! "random"))
 
 (defn join-game []
-  (accountant/navigate! (str "/game/" (:game-id @db)))
-  ;(game/join (:game-id @db))
-  )
+  (game/join! (:game-id @db)))
 
 (defn error-msg []
   (let [e (:error @db)]

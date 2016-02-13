@@ -22,13 +22,15 @@
                  [venantius/accountant "0.1.5"
                   :exclusions [org.clojure/tools.reader]]
                  ;[com.taoensso/sente "1.6.0"]
-                 [com.taoensso/sente "1.7.0-RC1"]
+                 [com.taoensso/sente "1.8.0-beta1"]
                  [org.clojure/tools.logging "0.3.1"]
                  [com.andrewmcveigh/cljs-time "0.3.14"]
                  [org.clojure/core.async "0.2.374"]
-                 [medley "0.7.0"]
+                 [medley "0.7.1"]
                  [clj-time "0.11.0"]
-                 ]
+                 [org.clojure/tools.namespace "0.2.11"]
+                 [com.taoensso/truss "1.0.0"]
+                 [jarohen/chime "0.1.9"]]
 
   :plugins [[lein-environ "1.0.1"]
             [lein-cljsbuild "1.1.1"]
@@ -83,8 +85,7 @@
                                       [org.clojure/tools.nrepl "0.2.12"]
                                       [com.cemerick/piggieback "0.2.1"]
                                       [org.clojure/core.async "0.2.374"]
-                                      [pjstadig/humane-test-output "0.7.0"]
-                                      [medley "0.7.0"]]
+                                      [pjstadig/humane-test-output "0.7.0"]]
 
                        :source-paths ["env/dev/clj"]
                        :plugins      [[lein-figwheel "0.5.0-2"

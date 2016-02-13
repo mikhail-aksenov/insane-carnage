@@ -1,28 +1,18 @@
 (ns insane-carnage.game
   (:require [clojure.tools.logging :as log]
-            [clojure.core.async :refer [go-loop go <! >! chan close! put! to-chan]]
+            [clojure.core.async :refer [go-loop go <! >! chan close! put! to-chan pub sub unsub] :as async]
             [insane-carnage.engine :as engine]
             [clojure.string :as str]
             [clj-time.core :as time]
-            [clj-time.format :as time-format]
-            [clojure.data :refer [diff]]))
+            [medley.core :refer :all]
+            [clojure.data :refer [diff]]
+            [chime :refer [chime-ch]]
+            [clj-time.core :as time]
+            [clj-time.periodic :as periodic]
+            [taoensso.truss :as truss :refer (have have! have?)]
+            ))
 
 (defn uuid [] (str (java.util.UUID/randomUUID)))
-
-(def init-state
-  {:games   {}
-   :players {}})
-
-;(def server-state
-;  (atom init-state))
-(def players (atom {}))
-
-(defonce update-chan (chan))
-
-(defn reset-all! []
-  nil
-  ;(reset! server-state init-state)
-  )
 
 (def valid-directions
   (for [x (range 3)
@@ -31,10 +21,7 @@
                         (= 1 y)))]
     [(dec x) (dec y)]))
 
-(def unit-types [:swordsman
-                 :pikeman])
-
-(defn- generate-players [width height cnt]
+(defn- generate-players [width height cnt tick]
   (let [all-positions (for [w (range width)
                             h (range height)] [w h])
         positions (->> all-positions
@@ -44,16 +31,19 @@
          (map (fn [[x y]]
                 (let [id (uuid)]
                   [id
-                   {:x              x
-                    :y              y
-                    :id             id
-                    :hp             100
-                    :max-hp         100
-                    :last-hit-at    0
-                    :direction      (rand-nth valid-directions)
-                    :move-direction (rand-nth [-1 1])
-                    :state          (rand-nth [:moving :staying])
-                    :type           (rand-nth unit-types)}])))
+                   {:x         x
+                    :y         y
+                    :id        id
+                    :hp        100
+                    :max-hp    100
+                    :direction (rand-nth valid-directions)
+                    :move      (-> engine/possible-moves
+                                   (disj :hit)
+                                   (seq)
+                                   (rand-nth))
+                    :moved-at  tick
+                    :hit       nil
+                    :type      (-> engine/unit-types keys rand-nth)}])))
          (shuffle)
          (into {}))))
 
@@ -71,120 +61,233 @@
    (let [width 100
          height 100
          ts (time/now)]
-     {:game-id      game-id
-      :width        width
-      :height       height
-      :sight        15
-      :players      (generate-players width height 30)
-      :game-started (str ts)
-      :tick         0
-      :status       :in-progress
-      :log          [{:ts      (format-log-time ts ts)
-                      :message "Game started"}]
+     {:id         game-id
+      :width      width
+      :height     height
+      :sight      15
+      :units      (generate-players width height 30 0)
+      :started-at (str ts)
+      :tick       0
+      :state      :running
+      :log        [{:ts      (format-log-time ts ts)
+                    :message "Game started"}]
       })))
 
-(defn- ensure-player [players player-id player-name]
-  (assoc players player-id {:player-id   player-id
-                            :player-name player-name}))
+;; -------------------------
+;; Utility
 
-(defn find-available-game-player [game]
-  (let [players (:players game)]
-    (->> players
-         (vals)
-         (filter #(not (:player-id %)))
-         (first))))
+(defn- unit-dead? [unit]
+  (-> unit :hp pos? not))
 
-(defn- bind-player-to-game [games game-player player-id game-id]
-  (assoc-in games [game-id :players (:id game-player) :player-id] player-id))
+(defn- game-full? [game]
+  (->> (:units game)
+       (remove-vals :player-id)
+       (empty?)))
 
-(defn- bind-game-to-player [players game-player player-id game-id]
-  (update-in players
-             [player-id]
-             assoc
-             :game-id game-id
-             :game-player-id (:id game-player)))
-
-(defn- choose-random-game []
-  (-> @engine/games vals rand-nth))
-
-(defn- get-game [game-id]
-  (get @engine/games game-id))
-
-(defn game-live-player-ids [game-id]
-  (->> (get @engine/games game-id)
-       (:players)
+(defn- random-available-game [games]
+  (->> games
        (vals)
-       (filter :player-id)
-       (map :player-id)))
+       (remove game-full?)
+       (first)))
 
-(defn update-games-and-players [game player-id player-name]
-  (let [game-id (:game-id game)
-        game-player (find-available-game-player game)]
-    (swap! engine/games
-           #(-> %
-                (assoc game-id game)
-                (bind-player-to-game game-player player-id game-id)))
-    (swap! players
-           #(-> %
-                (ensure-player player-id player-name)
-                (bind-game-to-player game-player player-id game-id)))))
+(defn- random-available-unit [game]
+  (->> (:units game)
+       (vals)
+       (remove unit-dead?)
+       (first)))
 
-(defn game-updated [game-id update]
-  ())
+;; -------------------------
+;; Channel based game
 
-(defn register-game [game]
-  (let [{:keys [game-id]} game
-        out-events (get-in @engine/game-channels [game-id :out])]
-    (engine/register-game game-id)
-    (engine/game-loop game-id)
-    (go-loop []
-      (when-let [msg (<! out-events)]
-        (when-let [update (:update msg)]
-          (game-updated (:game-id msg) update))))))
+(defn archive-game! [game]
+  (log/infof "Game %s archived" (:id game)))
 
-(defn start-new-game [player-id player-name]
-  (let [game (generate-game)
-        game-id (:game-id game)
-        game-player (find-available-game-player game)]
-    (log/info "Player" player-id "(" player-name ") started new game" game-id)
-    (update-games-and-players game player-id player-name)
-    (register-game game)
-    (get-game game-id)))
+(defmulti game-event
+          (fn [msg game ch-out] (:type msg)))
 
-(defn join-random-game [player-id player-name]
-  (log/info "Player" player-id "(" player-name ") want to join a random game")
-  (let [game (or
-               (log/spyf "Choose random game: "
-                         (choose-random-game))
-               (log/spyf "No game to choose from. Create new game."
-                         (generate-game)))
-        game-id (:game-id game)]
-    (update-games-and-players game player-id player-name)
-    (get-game game-id)))
+(defmethod game-event :game/start [_ game ch-out]
+  (let [next-game (assoc game :state :running)]
+    (put! ch-out {:type :game/started
+                  :game next-game})
+    next-game))
 
-(defn join-or-create-game [player-id player-name game-id]
-  (log/info "Player" player-id "(" player-name ") want to join game" game-id)
-  (let [game (or
-               (log/spyf (str "Join game " game-id)
-                         (get-game game-id))
-               (log/spyf "Game doesn't exist. Create new game."
-                         (generate-game game-id)))]
-    (update-games-and-players game player-id player-name)
-    (get-game game-id)))
+(defmethod game-event :game/join [{:keys [player-id] :as msg} game ch-out]
+  (let [unit (random-available-unit game)
+        next-unit (assoc unit :player-id player-id)
+        next-game (assoc-in game [:units (:id unit)] next-unit)]
+    (log/info "game-event" msg unit next-unit)
+    (put! ch-out {:type      :game/joined
+                  :game      next-game
+                  :unit      next-unit
+                  :player-id player-id})
+    next-game))
 
-(defn unbind-player-from-game [player-id]
-  (if-let [player (get @players player-id)]
-    (let [{:keys [game-id game-player-id]} player]
-      (log/info "Unbind player" player-id "from game" game-id "(game player " game-player-id ")")
-      (swap! engine/games
-             #(-> %
-                  (dissoc game-id :players game-player-id :player-id)))
-      (swap! players
-             #(-> %
-                  (dissoc player-id :game-id)
-                  (dissoc player-id :game-player-id))))))
+(defmethod game-event :game/leave [{:keys [player]} game ch-out]
+  (let [next-game (update-in game [:units (:unit-id player)] dissoc :player-id)]
+    next-game))
 
-(defn process-action [player-id action]
-  (let [player (get @players player-id)
-        game (get-game (:game-id player))]
-    (engine/process-action game player action)))
+(defmethod game-event :game/tick
+  [{:keys [tick] :as msg} game ch-out]
+  (let [next-game (engine/process-tick game tick)
+        over? (= :finished (:state next-game))]
+    (log/debug "game-event" msg)
+    (cond
+      over?
+      (put! ch-out {:type :game/over
+                    :game next-game})
+      (not= game next-game)
+      (put! ch-out {:type :game/updated
+                    :game next-game}))
+    next-game))
+
+(defmethod game-event :unit/move
+  [{:keys [unit-id move] :as msg} game _]
+  {:pre [unit-id (engine/possible-moves move)]}
+  (log/info "game-event" msg)
+  (engine/set-unit-move game unit-id move))
+
+(defn new-game
+  [game-id]
+  (let [ch-in (chan)
+        ch-out (chan)
+        game (assoc (generate-game game-id)
+               :ch-in ch-in
+               :ch-out ch-out)]
+    (go-loop [game game]
+      (when-let [msg (<! ch-in)]
+        (recur (game-event msg game ch-out))))
+    game))
+
+;; -------------------------
+;; Channel based server
+
+(def empty-server {:games   {}
+                   :players {}
+                   :tick    0
+                   :pause false})
+
+(defmulti server-event
+          (fn [msg app-state ch-out] (:type msg)))
+
+(defmethod server-event :game/join
+  [{:keys [game-id player-id player-name] :as msg} app-state _]
+  (let [game (get-in app-state [:games game-id])]
+    (log/info "server-event" msg)
+    (put! (:ch-in game) {:type      :game/join
+                         :player-id player-id})
+    (assoc-in app-state [:players player-id]
+              {:id   player-id
+               :name player-name})))
+
+(defmethod server-event :game/new
+  [{:keys [game-id player-id player-name] :as msg} app-state {:keys [mix-in] :as chans}]
+  (let [game (new-game game-id)
+        next-state (assoc-in app-state [:games game-id] game)]
+    (log/info "server-event" msg)
+    (async/admix mix-in (:ch-out game))
+    (server-event {:type        :game/join
+                   :game-id     (:id game)
+                   :player-id   player-id
+                   :player-name player-name}
+                  next-state chans)))
+
+(defmethod server-event :game/join-random
+  [{:keys [player-id player-name]} app-state chans]
+  (let [game (random-available-game (:games app-state))]
+    (server-event {:type        :game/join
+                   :game-id     (:id game)
+                   :player-id   player-id
+                   :player-name player-name}
+                  app-state chans)))
+
+(defmethod server-event :game/joined
+  [{:keys [game unit player-id] :as msg} app-state {:keys [ch-out]}]
+  (log/info "server-event" (dissoc msg :game) (:id game))
+  (put! ch-out msg)
+  (-> app-state
+      (update-in [:players player-id] assoc
+                 :game-id (:id game)
+                 :unit-id (:id unit))
+      (assoc-in [:games (:id game)] game)))
+
+(defmethod server-event :game/leave
+  [{:keys [player-id]} app-state _]
+  (let [player (get-in app-state [:players player-id])
+        game (get-in app-state [:games (:game-id player)])
+        next-state (-> app-state
+                       (update-in [:players player-id] dissoc :unit-id :game-id))]
+    (put! (:ch-in game) {:type   :game/leave
+                         :player player})
+    next-state))
+
+(defmethod server-event :game/updated
+  [{:keys [game] :as msg} app-state {:keys [ch-out]}]
+  (log/debug "server-event" (dissoc msg :game) (:id game))
+  (put! ch-out msg)
+  (assoc app-state [:games (:id game)] game))
+
+(defmethod server-event :game/over
+  [{:keys [game]} app-state {:keys [mix-in]}]
+  (let []
+    (async/unmix mix-in (:ch-out game))
+    (archive-game! game)
+    (-> app-state
+        (dissoc-in [:games (:id game)]))))
+
+(defmethod server-event :player/move
+  [{:keys [player-id move] :as msg} app-state _]
+  {:pre [(have? [:el engine/possible-moves] move)]}
+  (let [player (get-in app-state [:players player-id])
+        game (get-in app-state [:games (:game-id player)])]
+    (put! (:ch-in game) {:type    :unit/move
+                         :unit-id (:unit-id player)
+                         :move    move}))
+  app-state)
+
+(defmethod server-event :server/tick
+  [_ app-state _]
+  (let [tick (inc (:tick app-state))]
+    (->> (:games app-state)
+         (filter-vals #(= :running (:state %)))
+         (map-vals #(put! (:ch-in %) {:type :game/tick
+                                      :tick tick}))
+         (doall))
+    (assoc app-state :tick tick)))
+
+(defmethod server-event :server/pause
+  [_ app-state _]
+  (update app-state :pause not))
+
+(defn- close-games [games]
+  (->> games
+       (map-vals
+         (fn [game]
+           (close! (:ch-in game))
+           (close! (:ch-out game))))
+       (doall)))
+
+(defn new-server
+  []
+  (let [ch-in (chan)
+        mix-in (async/mix ch-in)
+        ch-out (chan)
+        timer (chime-ch
+                (rest
+                  (periodic/periodic-seq (time/now)
+                                         (time/millis engine/tick-duration))))]
+    (go-loop [app-state empty-server]
+      (if-let [msg (<! ch-in)]
+        (recur
+          (if (:pause app-state)
+            app-state
+            (server-event msg app-state {:ch-out ch-out
+                                         :mix-in mix-in})))
+        (do
+          (close-games (:games app-state))
+          (close! ch-in)
+          (close! ch-out))))
+    ;(go-loop []
+    ;  (when-let [_ (<! timer)]
+    ;    (>! ch-in {:type :server/tick})
+    ;    (recur)))
+    [ch-in ch-out]))

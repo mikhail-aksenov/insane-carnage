@@ -10,10 +10,10 @@
     id))
 
 (defonce db
-         (atom {:player-name ""
+         (atom {:player-name "Jake"
                 :player-id   (get-player-id)
-                :game-player-id nil
+                :unit-id     nil
                 :game-id     nil
-                :game-state  :setup                         ; setup|wait|run|over
+                :state       :setup                      ; setup|waiting|running|over
                 :game        nil
                 }))

@@ -10,7 +10,9 @@
             [insane-carnage.welcome :refer [welcome]]
             [insane-carnage.db :refer [db]]
             [insane-carnage.game :as game]
-            [insane-carnage.talk :as talk]))
+            [insane-carnage.field :as field]
+            [insane-carnage.talk :as talk]
+            [medley.core :refer [filter-vals]]))
 
 (enable-console-print!)
 
@@ -32,15 +34,17 @@
      [:div.throbber-loader "Loading..."]]))
 
 (defn current-page []
-  (let [{:keys [game-state game]} @db]
-    (println "current-page" game-state)
+  (let [{:keys [state game]} @db]
+    ;(println "current-page" state)
     [:div
-     [(case game-state
+     [:button {:on-click game/reset} "Reset"]
+     [(case state
         :setup welcome
-        ;:wait wait-screen
-        :run (if game
-               game/render-field
-               wait-screen))]]))
+        :waiting "Waiting"
+        :running (if game
+                   field/render-game
+                   wait-screen)
+        :finished "Game over")]]))
 
 ;; -------------------------
 ;; Communication
@@ -55,38 +59,48 @@
 ;  (def chsk-state state)                                    ; Watchable, read-only atom
 ;  )
 
-(defmulti event-msg-handler :id)
+(defmulti event-msg-handler
+          (fn [type msg] type))
 
-(defmethod event-msg-handler :game/update
-  [{:as ev-msg :keys [event id ?reply-fn]}]
-  (let [[_ {:keys [game-id update]}] event]
-    (println "Update game" game-id "with update" update)
-    (game/update-game! game-id update)))
+(defmethod event-msg-handler :game/updated
+  [_ msg]
+  (let [{:keys [game]} msg]
+    ;(println "game/updated" (dissoc game :units))
+    (game/update-game! game)))
+
+(defmethod event-msg-handler :game/joined
+  [_ msg]
+  (let [{:keys [game unit-id]} msg]
+    (println "game/joined" (:id game) "as" (get-in game [:units unit-id]))
+    (game/joined! game unit-id)))
 
 (defmethod event-msg-handler :default
-  [{:as ev-msg :keys [event id ?reply-fn]}]
-  (when-not (.startsWith (-> event first str) ":chsk")
-    (println "Unhandled event" event)))
+  [type msg]
+  (println "Unhandled msg type" type msg))
 
 (defn event-msg-handler* [{:as ev-msg :keys [id ?data event]}]
-  (println "Event" event)
-  (event-msg-handler ev-msg))
+  ;(println "Event" event)
+  (if (= (first event) :chsk/recv)
+    (apply event-msg-handler (second event))
+    (println "Service msg" (first event))))
 
-(defn listen-web-socket! []
-  (sente/start-chsk-router! talk/ch-chsk event-msg-handler*))
-
-(listen-web-socket!)
+(defonce router_ (atom nil))
+(defn stop-router! [] (when-let [stop-f @router_] (stop-f)))
+(defn start-router! []
+  (stop-router!)
+  (reset! router_
+          (sente/start-client-chsk-router!
+            talk/ch-chsk event-msg-handler*)))
 
 ;; -------------------------
 ;; Routes
 
 (secretary/set-config! :prefix "#")
 
-(secretary/defroute "/" []
-                    (game/reset))
+(secretary/defroute "/" [] (game/reset))
 
-(secretary/defroute "/game/:game-id" [game-id]
-                    (game/join game-id))
+;(secretary/defroute "/game/:game-id" [game-id]
+;                    (game/join game-id))
 
 ;; -------------------------
 ;; Initialize app
@@ -97,4 +111,5 @@
 (defn init! []
   (accountant/configure-navigation!)
   (accountant/dispatch-current!)
-  (mount-root))
+  (mount-root)
+  (start-router!))
