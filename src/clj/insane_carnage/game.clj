@@ -134,14 +134,12 @@
     (cond
       over?
       (put! ch-out {:type :game/over
-                    :game next-game})
+                    :game next-game
+                    :log log})
       (not= game next-game)
       (put! ch-out {:type :game/updated
-                    :game next-game}))
-    (when (not (empty? log))
-      (put! ch-out {:type    :game/log
-                    :game-id (:id game)
-                    :log     log}))
+                    :game next-game
+                    :log log}))
     next-game))
 
 (defmethod game-event :unit/move
@@ -222,15 +220,18 @@
         game (get-in app-state [:games (:game-id player)])
         next-state (-> app-state
                        (update-in [:players player-id] dissoc :unit-id :game-id))]
-    (put! (:ch-in game) {:type   :game/leave
-                         :player player})
+    (when game
+      (put! (:ch-in game) {:type   :game/leave
+                           :player player}))
     next-state))
 
 (defmethod server-event :game/updated
-  [{:keys [game] :as msg} app-state {:keys [ch-out]}]
+  [{:keys [game log] :as msg} app-state {:keys [ch-out]}]
   (log/debug "server-event" (dissoc msg :game) (:id game))
   (put! ch-out msg)
-  (assoc app-state [:games (:id game)] game))
+  (-> app-state
+      (assoc [:games (:id game)] game)
+      (update-in [:logs (:id game)] concat)))
 
 (defmethod server-event :game/log
   [{:keys [log game-id] :as msg} app-state {:keys [ch-out]}]

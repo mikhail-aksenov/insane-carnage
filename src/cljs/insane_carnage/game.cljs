@@ -25,7 +25,9 @@
 
 (defn- start-game-loop! [db]
   (clear-game-loop! db)
-  (assoc db :timer (js/setInterval game-loop engine/tick-duration)))
+  ;(assoc db :timer (js/setInterval game-loop engine/tick-duration))
+  db
+  )
 
 (defn pause []
   (swap! db

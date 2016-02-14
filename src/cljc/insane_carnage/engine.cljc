@@ -7,6 +7,8 @@
                 :cljs cljs.core.async) :as async :refer [<! >! chan close! put! to-chan]]
             [#?(:clj  clj-time.core
                 :cljs cljs-time.core) :as time]
+            [#?(:clj clj-time.format
+                :cljs cljs-time.format) :as tf]
             [clojure.data :refer [diff]]
             [medley.core :refer [filter-vals remove-vals map-vals drop-upto dissoc-in]]))
 
@@ -224,7 +226,7 @@
           (fn [unit meta game] (:type unit)))
 
 (defmethod process-hit-move :default [unit {:keys [hit-move-duration]} game]
-  (if (pos? hit-move-duration)
+  (if hit-move-duration
     (update unit :hit process-moveable hit-move-duration game)
     unit))
 
@@ -290,20 +292,25 @@
        (doall))
   game)
 
+(def ts-formatter (tf/formatter "HH:mm"))
+
+(defn ->log [msg]
+  {:ts      (tf/unparse ts-formatter (time/now))
+   :message msg})
+
 (defn create-unit-log [prev-unit next-unit]
   (let [died? (and (not (dead? prev-unit))
                    (dead? next-unit))]
     (when died?
-      [{:ts      (time/now)
-        :message (str "Unit " (:id next-unit)
-                      " was killed by " (:killed-by next-unit))}])))
+      [(->log (str "Unit " (:id next-unit)
+                   " was killed by " (:killed-by next-unit)))])))
 
 (defn create-game-log [prev-game next-game]
   (let [prev-units (:units prev-game)]
     (mapcat
       (fn [[id unit]]
-        (create-unit-log unit
-                         (get prev-units id)))
+        (create-unit-log (get prev-units id)
+                         unit))
       (:units next-game))))
 
 (defn process-tick [game tick]

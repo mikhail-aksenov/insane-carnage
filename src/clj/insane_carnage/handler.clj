@@ -124,16 +124,15 @@
                                        :log log}]))
 
 (defmethod game-event-handler :game/updated
-  [{:keys [game] :as msg}]
+  [{:keys [game log] :as msg}]
   {:pre [(-> game engine/game-player-ids empty? not)]}
   (log/debug "Game Event" (dissoc msg :game) (:id game))
   (let [ids (engine/game-player-ids game)
         prepared-game (prepare-game-for-client game)]
     (->> ids
          (map
-           (fn [id]
-             (chsk-send! id [:game/updated {:game prepared-game}]))
-           )
+           #(chsk-send! % [:game/updated {:game prepared-game
+                                          :log  log}]))
          (doall))))
 
 ;; -------------------------

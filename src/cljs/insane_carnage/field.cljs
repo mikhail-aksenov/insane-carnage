@@ -244,7 +244,7 @@
 (defn render-log [log]
   [:div#battle-log {:class (when-not @log-visible "log-hidden")}
    [:h2#log-header "Battle log"
-    [:button.btn.btn-default {:on-click #(swap! log-visible not)}
+    [:button.btn.btn-default {:on-click #(do (swap! log-visible not) nil)}
      (if @log-visible "Hide" "Show")]]
    [:div#log-entries
     (map-indexed
@@ -252,7 +252,7 @@
         [:div.row {:key index}
          [:div.ts.col-xs-2 ts]
          [:div.col-xs-10 message]])
-      log)]])
+      (reverse log))]])
 
 (defn get-passsed-time [game]
   (- (.getTime (js/Date.))
@@ -316,7 +316,7 @@
 (def render-field render-field*)
 
 (defn render-game* []
-  (let [{:keys [game unit-id]} @db
+  (let [{:keys [game log unit-id]} @db
         {:keys [sight]} game
         width (.. js/document -documentElement -clientWidth)
         height (.. js/document -documentElement -clientHeight)
@@ -331,7 +331,7 @@
        (svg-defs unit sight)
        [render-field {:game game :unit unit :x x :y y}]]]
      (render-hud game unit)
-     (render-log (:log game))]))
+     (render-log log)]))
 
 (def render-game
   (with-meta render-game*
