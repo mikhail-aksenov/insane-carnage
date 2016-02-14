@@ -3,6 +3,7 @@
             [reagent.session :as session]
             [secretary.core :as secretary :include-macros true]
             [accountant.core :as accountant]
+            [goog.net.cookies :as cookie]
             [insane-carnage.db :refer [db]]
             [insane-carnage.game :as game]))
 
@@ -24,6 +25,10 @@
        (when e
          [:div (str "Sorry. " e)])])))
 
+(defn set-player-name! [name]
+  (cookie/set "player-name" name)
+  (swap! db assoc :player-name name))
+
 (defn welcome []
   (let [can-start? (not (empty? (:player-name @db)))]
     [:div#welcome
@@ -32,10 +37,7 @@
       [:label "Your name (required)"]
       [:input.form-control {:type      "text"
                             :value     (:player-name @db)
-                            :on-change #(swap! db
-                                               assoc
-                                               :player-name
-                                               (.. % -target -value))}]]
+                            :on-change #(set-player-name! (.. % -target -value))}]]
      [:div.form-group
       [:button.btn.btn-default {:disabled (not can-start?)
                                 :on-click start-new-game}

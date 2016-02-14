@@ -47,7 +47,8 @@
                 :unit-id unit-id
                 :state :running
                 :log log)
-              (start-game-loop!))))
+              (start-game-loop!)))
+  (accountant/navigate! (str "/game/" (:id game))))
 
 (defn join! [game-id]
   (.log js/console "Join game" game-id)
@@ -59,15 +60,19 @@
               (assoc :state :waiting)
               (assoc :game-id game-id))))
 
+(defn change-unit! []
+  (join! (:game-id @db)))
+
 (defn reset []
   (swap! db
          #(-> %
               (clear-game-loop!)
               (assoc :state :setup)
               (dissoc :game-id)
-              (dissoc :game))))
+              (dissoc :game)
+              (dissoc :unit-id))))
 
-(defn leave []
+(defn leave! []
   (println "Leave game")
   (chsk-send! [:game/leave])
   (accountant/navigate! "/"))

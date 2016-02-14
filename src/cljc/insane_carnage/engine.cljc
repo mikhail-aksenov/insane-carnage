@@ -156,7 +156,9 @@
     (filter-vals collider units)))
 
 (defn- apply-hit [meta offender-id unit]
-  (let [next-unit (update unit :hp - (:hit-damage meta))]
+  (let [hp (:hp unit)
+        next-unit (assoc unit
+                    :hp (max 0 (- hp (:hit-damage meta))))]
     (if (dead? next-unit)
       (assoc next-unit :killed-by offender-id)
       next-unit)))
@@ -298,19 +300,22 @@
   {:ts      (tf/unparse ts-formatter (time/now))
    :message msg})
 
-(defn create-unit-log [prev-unit next-unit]
+(defn create-unit-log [prev-unit next-unit next-game]
   (let [died? (and (not (dead? prev-unit))
                    (dead? next-unit))]
     (when died?
-      [(->log (str "Unit " (:id next-unit)
-                   " was killed by " (:killed-by next-unit)))])))
+      [(->log (str (get-in next-game
+                           [:units (:killed-by next-unit) :name])
+                   " killed "
+                   (:name next-unit)))])))
 
 (defn create-game-log [prev-game next-game]
   (let [prev-units (:units prev-game)]
     (mapcat
       (fn [[id unit]]
         (create-unit-log (get prev-units id)
-                         unit))
+                         unit
+                         next-game))
       (:units next-game))))
 
 (defn process-tick [game tick]

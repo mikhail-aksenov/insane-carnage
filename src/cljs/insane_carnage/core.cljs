@@ -24,7 +24,6 @@
 
 (defn wait-screen []
   (let [game-id (:game-id @db)
-        _ (println "wait-screen" @db)
         msg (case game-id
               "new" "Creating new game..."
               "random" "Joining random game..."
@@ -40,10 +39,8 @@
      [:button {:on-click game/reset} "Reset"]
      [(case state
         :setup welcome
-        :waiting "Waiting"
-        :running (if game
-                   field/render-game
-                   wait-screen)
+        :waiting wait-screen
+        :running field/render-game
         :finished "Game over")]]))
 
 ;; -------------------------
@@ -65,7 +62,7 @@
 (defmethod event-msg-handler :game/updated
   [_ msg]
   (let [{:keys [game log]} msg]
-    (println "game/updated" (keys msg))
+    ;(println "game/updated" (keys msg))
     (game/update-game! game log)))
 
 (defmethod event-msg-handler :game/joined
@@ -80,8 +77,12 @@
 
 (defn event-msg-handler* [{:as ev-msg :keys [id ?data event]}]
   ;(println "Event" event)
-  (if (= (first event) :chsk/recv)
+  (case (first event)
+    :chsk/recv
     (apply event-msg-handler (second event))
+    :chsk/state
+    (when (-> event second :first-open?)
+      (accountant/dispatch-current!))
     (println "Service msg" (first event))))
 
 (defonce router_ (atom nil))
@@ -97,10 +98,12 @@
 
 (secretary/set-config! :prefix "#")
 
-(secretary/defroute "/" [] (game/reset))
+(secretary/defroute "/" []
+                    (game/reset))
 
-;(secretary/defroute "/game/:game-id" [game-id]
-;                    (game/join game-id))
+(secretary/defroute "/game/:game-id" [game-id]
+                    (when-not (:game @db)
+                      (game/join! game-id)))
 
 ;; -------------------------
 ;; Initialize app
@@ -109,7 +112,7 @@
   (reagent/render [current-page] (.getElementById js/document "app")))
 
 (defn init! []
+  (start-router!)
   (accountant/configure-navigation!)
-  (accountant/dispatch-current!)
-  (mount-root)
-  (start-router!))
+  ;(accountant/dispatch-current!)
+  (mount-root))

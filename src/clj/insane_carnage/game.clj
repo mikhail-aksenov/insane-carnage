@@ -2,6 +2,7 @@
   (:require [clojure.tools.logging :as log]
             [clojure.core.async :refer [go-loop go <! >! chan close! put! to-chan pub sub unsub] :as async]
             [insane-carnage.engine :as engine]
+            [insane-carnage.resources :as resources]
             [clojure.string :as str]
             [clj-time.core :as time]
             [medley.core :refer :all]
@@ -34,6 +35,7 @@
                    {:x         x
                     :y         y
                     :id        id
+                    :name      (rand-nth resources/names)
                     :hp        100
                     :max-hp    100
                     :direction (rand-nth valid-directions)
@@ -94,7 +96,8 @@
   (->> (:units game)
        (vals)
        (remove unit-dead?)
-       (first)))
+       (remove :player-id)
+       (rand-nth)))
 
 ;; -------------------------
 ;; Channel based game
@@ -115,7 +118,7 @@
   (let [unit (random-available-unit game)
         next-unit (assoc unit :player-id player-id)
         next-game (assoc-in game [:units (:id unit)] next-unit)]
-    (log/info "game-event" msg unit next-unit)
+    (log/debug "game-event" msg unit next-unit)
     (put! ch-out {:type      :game/joined
                   :game      next-game
                   :unit      next-unit
@@ -135,17 +138,17 @@
       over?
       (put! ch-out {:type :game/over
                     :game next-game
-                    :log log})
+                    :log  log})
       (not= game next-game)
       (put! ch-out {:type :game/updated
                     :game next-game
-                    :log log}))
+                    :log  log}))
     next-game))
 
 (defmethod game-event :unit/move
   [{:keys [unit-id move] :as msg} game _]
   {:pre [unit-id (engine/possible-moves move)]}
-  (log/info "game-event" msg)
+  (log/debug "game-event" msg)
   (engine/set-unit-move game unit-id move))
 
 (defn new-game
@@ -174,8 +177,17 @@
 
 (defmethod server-event :game/join
   [{:keys [game-id player-id player-name] :as msg} app-state _]
-  (let [game (get-in app-state [:games game-id])]
+  {:pre [(get-in app-state [:games game-id])]}
+  (let [game (get-in app-state [:games game-id])
+        player (get-in app-state [:players player-id])
+        cur-game-id (:gamd-id player)]
     (log/info "server-event" msg)
+    (when (and player
+               cur-game-id
+               (not= cur-game-id game-id))
+      (when-let [cur-game (get-in app-state [:games (:game-id player)])]
+        (put! (:ch-in cur-game) {:type   :game/leave
+                                 :player player})))
     (put! (:ch-in game) {:type      :game/join
                          :player-id player-id})
     (assoc-in app-state [:players player-id]
@@ -252,9 +264,10 @@
   {:pre [(have? [:el engine/possible-moves] move)]}
   (let [player (get-in app-state [:players player-id])
         game (get-in app-state [:games (:game-id player)])]
-    (put! (:ch-in game) {:type    :unit/move
-                         :unit-id (:unit-id player)
-                         :move    move}))
+    (when game
+      (put! (:ch-in game) {:type    :unit/move
+                           :unit-id (:unit-id player)
+                           :move    move})))
   app-state)
 
 (defmethod server-event :server/tick

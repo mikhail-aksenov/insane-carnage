@@ -68,9 +68,9 @@
             :width  tile-size
             :height tile-size}]))
 
-(defn render-hud [game player]
-  ;{:pre [(:hp player) (:max-hp player)]}
-  (let [{:keys [hp max-hp]} player
+(defn render-hud [game unit]
+  ;{:pre [(:hp unit) (:max-hp unit)]}
+  (let [{:keys [hp max-hp]} unit
         hp-percent (* 100 (/ hp max-hp))]
     [:div#game-hud
      [:div.player-state
@@ -82,19 +82,26 @@
               :aria-valuemin 0
               :aria-valuemax max-hp
               :class         (str "progress-bar progress-bar-"
-                                  (condp < hp-percent
+                                  (condp <= hp-percent
                                     60 "success"
                                     30 "warning"
                                     0 "danger"))}
-        ;hp
-        ]]]
+        ]]
+      (when (engine/dead? unit)
+        "(you're dead)")]
      [:div.game-menu
-      [:button.btn.btn-default
-       {:on-click game/leave}
-       "Leave"]
-      [:button.btn.btn-default
-       {:on-click game/pause}
-       (if (:pause @db) "Resume" "Pause")]]]))
+      [:div
+       [:button.btn.btn-default
+        {:on-click game/leave!}
+        "Leave"]]
+      [:div
+       [:button.btn.btn-default
+        {:on-click game/change-unit!}
+        "Change unit"]]
+      ;[:button.btn.btn-default
+      ; {:on-click game/pause}
+      ; (if (:pause @db) "Resume" "Pause")]
+       ]]))
 
 (defn- seen? [{:keys [left right top bottom] :as visible-bounds} x y]
   (and (>= x left)

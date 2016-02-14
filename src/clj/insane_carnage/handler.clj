@@ -118,7 +118,10 @@
 
 (defmethod game-event-handler :game/joined
   [{:keys [game player-id unit log] :as msg}]
-  (log/info "Game Event" (dissoc msg :game) (:id unit) (type player-id))
+  (log/info "Game Event" {:type :game/joined
+                          :game-id (:id game)
+                          :unit-id (:id unit)
+                          :player-id player-id})
   (chsk-send! player-id [:game/joined {:game    (prepare-game-for-client game)
                                        :unit-id (:id unit)
                                        :log log}]))
@@ -159,7 +162,7 @@
                             :player-id   player-id
                             :player-name player-name})
       (put! ch-in {:type        :game/join
-                   :game-id     :game-id
+                   :game-id     game-id
                    :player-id   player-id
                    :player-name player-name}))))
 
@@ -176,7 +179,7 @@
   (let [player-id (get-player-id ring-req)
         [ch-in] @game-server
         [_ {:keys [move]}] event]
-    (log/infof "Player %s moves %s" player-id move)
+    (log/debugf "Player %s moves %s" player-id move)
     (put! ch-in {:type      :player/move
                  :move      move
                  :player-id player-id})))
