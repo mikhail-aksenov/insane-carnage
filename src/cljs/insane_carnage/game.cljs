@@ -18,7 +18,7 @@
   (swap! db
          (fn [db]
            (let [game (:game db)
-                 next-game (engine/process-tick game (inc (:tick game)))]
+                 [next-game _] (engine/process-tick game (inc (:tick game)))]
              (when (not= :running (:state next-game))
                (clear-game-loop! db))
              (assoc db :game next-game)))))
@@ -27,7 +27,15 @@
   (clear-game-loop! db)
   (assoc db :timer (js/setInterval game-loop engine/tick-duration)))
 
-(defn- joined! [game unit-id]
+(defn pause []
+  (swap! db
+         (fn [db]
+           (let [next-db (update db :pause not)]
+             (if (:pause db)
+               (start-game-loop! next-db)
+               (clear-game-loop! next-db))))))
+
+(defn- joined! [game unit-id log]
   {:pre [unit-id]}
   (swap! db
          #(-> %
@@ -35,7 +43,8 @@
                 :game-id (:id game)
                 :game game
                 :unit-id unit-id
-                :state :running)
+                :state :running
+                :log log)
               (start-game-loop!))))
 
 (defn join! [game-id]
@@ -68,5 +77,8 @@
       (swap! db update :game engine/set-unit-move (:unit-id @db) move)
       (chsk-send! [:player/move {:move move}]))))
 
-(defn update-game! [game]
-  (swap! db assoc :game game))
+(defn update-game! [game log]
+  (swap! db
+         #(-> %
+              (assoc :game game)
+              (update :log concat log))))

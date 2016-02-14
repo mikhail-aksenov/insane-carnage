@@ -20,7 +20,7 @@
 (def unit-types
   {:swordsman {:hit-damage    15
                :move-duration 4
-               :hit-duration  5
+               :hit-duration  2
                :sight         20
                :hit-cells
                               (fn [{:keys [x y direction]}]
@@ -34,23 +34,33 @@
                                         [-1 -1] [[0 -1] [-1 -1] [-1 0]]
                                         [-1 0] [[-1 -1] [-1 0] [-1 1]]
                                         [-1 1] [[-1 0] [-1 1] [0 1]])]
-                                  (mapv #(mapv + %1 [x y]) local)))}
+                                  (mapv #(mapv + % [x y]) local)))}
    :pikeman   {:hit-damage    10
                :move-duration 7
-               :hit-duration  10
+               :hit-duration  3
                :sight         20
                :hit-cells
                               (fn [{:keys [x y direction]}]
-                                [direction
-                                 (mapv #(* 2) direction)])}
+                                (mapv
+                                  #(mapv + % [x y])
+                                  [direction
+                                   (mapv #(* % 2) direction)]))}
    :bowman    {:hit-damage        20
                :move-duration     3
-               :hit-duration      30
+               :hit-duration      10
                :sight             30
                :hit-move-duration 1
                :hit-cells
-                                  (fn [{:keys [x y]}]
-                                    [x y])}})
+                                  (fn [{:keys [x y direction]}]
+                                    [(mapv + [x y] direction)])
+               :new-hit
+                                  (fn [unit tick]
+                                    {:moved-at   tick
+                                     :started-at tick
+                                     :x          (:x unit)
+                                     :y          (:y unit)
+                                     :direction  (:direction unit)
+                                     :move       :move-ahead})}})
 
 (def possible-directions
   [[0 1]
@@ -100,22 +110,21 @@
 ;; Hits
 
 (defn- new-hit [unit tick]
-  (let [meta (get unit-types type)]
-    {:moved-at   tick
-     :started-at tick
-     :x          (:x unit)
-     :y          (:y unit)
-     :direction  (:direction unit)}))
+  {:moved-at   tick
+   :started-at tick
+   :x          (:x unit)
+   :y          (:y unit)
+   :direction  (:direction unit)})
 
 (defn- can-hit? [unit meta tick]
   (let [hit (:hit unit)]
-    (or hit
+    (or (not hit)
         (> (- tick (:started-at hit)) (:hit-duration meta)))))
 
 (defn- make-hit [unit meta tick]
-  ;(println "make-hit" unit meta tick)
   (if (can-hit? unit meta tick)
-    (assoc unit :hit (new-hit unit tick))
+    (let [constr (or (:new-hit meta) new-hit)]
+      (assoc unit :hit (constr unit tick)))
     unit))
 
 (defn- cells-bounds [fcell & cells]
@@ -144,23 +153,27 @@
   (let [collider (partial hit-collides-unit? (set hit-cells))]
     (filter-vals collider units)))
 
-(defn- apply-hit [meta unit]
-  (update unit :hp - (:hit-damage meta)))
+(defn- apply-hit [meta offender-id unit]
+  (let [next-unit (update unit :hp - (:hit-damage meta))]
+    (if (dead? next-unit)
+      (assoc next-unit :killed-by offender-id)
+      next-unit)))
 
 (defn- process-hit [game offender]
-  {:pre [(:units game)]
+  {:pre  [(:units game)]
    :post [(:units %)]}
   (let [tick (:tick game)
         hit (:hit offender)
         units (:units game)
         meta (get unit-types (:type offender))
-        over? (> (- tick (:moved-at hit)) (:hit-duration meta))]
+        over? (> (- tick (:started-at hit)) (:hit-duration meta))
+        id (:id offender)]
     (if over?
-      (dissoc-in game [:units (:id offender) :hit])
-      (let [other-units (dissoc units (:id offender))
+      (dissoc-in game [:units id :hit])
+      (let [other-units (dissoc units id)
             hit-cells ((:hit-cells meta) hit)
             victim-ids (keys (hit-hurt-victims hit-cells other-units))
-            apply-hit (partial apply-hit meta)
+            apply-hit (partial apply-hit meta id)
             next-units
             (reduce
               (fn [units victim-id]
@@ -170,7 +183,7 @@
         (assoc game :units next-units)))))
 
 (defn- process-all-hits [game]
-  {:pre [(:units game)]
+  {:pre  [(:units game)]
    :post [(:units %)]}
   (reduce
     (fn [game [_ unit]]
@@ -216,7 +229,7 @@
     unit))
 
 (defn- process-unit-move [unit game]
-  {:pre [(:id unit)]
+  {:pre  [(:id unit)]
    :post [(:id unit)]}
   (if (dead? unit)
     unit
@@ -229,7 +242,7 @@
             :else unit)]
       (if-not (:hit unit)
         moved-unit
-        (update moved-unit :hit process-hit-move meta game)))))
+        (process-hit-move moved-unit meta game)))))
 
 (defn- process-all-moves [{:keys [units] :as game}]
   (let [next-units (->> units
@@ -253,7 +266,7 @@
     units))
 
 (defn- update-state [game]
-  {:pre [(:units game)]
+  {:pre  [(:units game)]
    :post [(:units %)]}
   (let [units (:units game)
         all-dead (all-dead? units)
@@ -277,6 +290,22 @@
        (doall))
   game)
 
+(defn create-unit-log [prev-unit next-unit]
+  (let [died? (and (not (dead? prev-unit))
+                   (dead? next-unit))]
+    (when died?
+      [{:ts      (time/now)
+        :message (str "Unit " (:id next-unit)
+                      " was killed by " (:killed-by next-unit))}])))
+
+(defn create-game-log [prev-game next-game]
+  (let [prev-units (:units prev-game)]
+    (mapcat
+      (fn [[id unit]]
+        (create-unit-log unit
+                         (get prev-units id)))
+      (:units next-game))))
+
 (defn process-tick [game tick]
   {:pre [(> tick (:tick game))]}
   (let [next-game (-> game
@@ -286,8 +315,9 @@
                       (process-all-hits)
                       (update-state)
                       ;(log-live-units)
-                      )]
-    next-game))
+                      )
+        log (create-game-log game next-game)]
+    [next-game log]))
 
 (defn set-unit-move [game unit-id move]
   {:pre [(get possible-moves move)]}

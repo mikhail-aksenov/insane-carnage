@@ -72,31 +72,41 @@ a:hover {
         transition: all 0.2s ease;
     }
 
-    .player {
-        .player-icon { fill: #CFD8DC; }
+    .unit {
+        .unit-icon { fill: #CFD8DC; }
         transition: all 0.2s ease;
 
         &.dead {
-            .player-icon { fill: red; }
+            .unit-icon { fill: red; }
         }
 
         &.live {
-            .player-icon { fill: #ef9a9a; }
+            .unit-icon { fill: #ef9a9a; }
         }
 
         &.live.you {
-            .player-icon { fill: #80DEEA; }
+            .unit-icon { fill: #80DEEA; }
         }
 
-        .player-dir {
+        .unit-dir {
             fill: #455A64;
             opacity: 0.3;
         }
 
-        .hit {
-            fill: #FF5722;
-            opacity: 0.5;
-            transition: opacity 0.2s ease;
+        .unit-letter {
+            alignment-baseline: middle;
+            text-anchor: middle;
+        }
+    }
+
+    .hit {
+        fill: #FF5722;
+        opacity: 0.5;
+        transition: opacity 0.2s ease;
+
+        &.bowman {
+            stroke: #FF5722;
+            stroke-width: 5px;
         }
     }
 
@@ -135,7 +145,7 @@ a:hover {
     width: 40rem;
     height: 23rem;
     left: @hud-padding;
-    bottom: @hud-padding;
+    bottom: 0;
     overflow: hidden;
     opacity: 0.3;
     flex-direction: column;

@@ -6,7 +6,8 @@
             [insane-carnage.talk :refer [chsk-send!]]
             [cljs-time.core :as time]
             [insane-carnage.engine :as engine]
-            [insane-carnage.game :as game]))
+            [insane-carnage.game :as game]
+            [medley.core :refer [filter-vals map-vals]]))
 
 (def move-key-map
   {37 :turn-left                                            ; left arrow
@@ -90,7 +91,10 @@
      [:div.game-menu
       [:button.btn.btn-default
        {:on-click game/leave}
-       "Leave"]]]))
+       "Leave"]
+      [:button.btn.btn-default
+       {:on-click game/pause}
+       (if (:pause @db) "Resume" "Pause")]]]))
 
 (defn- seen? [{:keys [left right top bottom] :as visible-bounds} x y]
   (and (>= x left)
@@ -119,36 +123,48 @@
          "A" r " " r " " 0 " " 0 " " 0 " " (first p1) " " (last p1)
          "z")))
 
-(defn player-dir [player]
-  [:path.player-dir {:d (circle-segment-d 0 0 (* tile-size 2) (/ js/Math.PI 6))}])
+(defn unit-translate [unit]
+  (let [{:keys [x y]} unit
+        [w h] (to-view x y)]
+    (str "translate(" (+ w half-tile-size) " " (+ h half-tile-size) ")")))
+
+(defn unit-rotate [unit]
+  (str "rotate(" (- (direction->rotation unit)) ")"))
+
+(defn unit-dir [unit]
+  [:path.unit-dir {:transform (unit-rotate unit)
+                   :d (circle-segment-d 0 0 (* tile-size 2) (/ js/Math.PI 6))}])
 
 (defmulti render-hit :type)
 
-(defmethod render-hit :swordsman [player]
-  [:path.hit {:d (circle-segment-d 0 0 (* tile-size 1.5) (/ js/Math.PI 4))}])
+(defmethod render-hit :swordsman [unit]
+  [:path.hit {:key       (:id unit)
+              :transform (str (unit-translate unit)
+                              (unit-rotate unit))
+              :d         (circle-segment-d 0 0 (* tile-size 1.5) (/ js/Math.PI 4))}])
 
-(defmethod render-hit :pikeman [player]
-  (let [shown? (atom false)]
-    (fn []
-      (if shown?
-        [:path]
-        (do
-          (reset! shown? false)
-          [:path.hit {:d (circle-segment-d 0 0 (* tile-size 2.5) (/ js/Math.PI 12))}])))))
+(defmethod render-hit :pikeman [unit]
+  [:path.hit {:key       (:id unit)
+              :transform (str (unit-translate unit)
+                              (unit-rotate unit))
+              :d         (circle-segment-d 0 0 (* tile-size 2.5) (/ js/Math.PI 12))}])
 
-(defn show-hit? [unit tick]
-  (when-let [hit (:hit unit)]
-    (let [{:keys [type]} unit
-          meta (engine/unit-meta type)
-          ticks-passed (- tick (:started-at hit))
-          hit-duration (get meta :hit-duration)]
-      (if (>= hit-duration ticks-passed)
-        (render-hit unit)
-        [:path]))))
+(defmethod render-hit :bowman [unit]
+  (let [{:keys [x y direction]} (:hit unit)
+        [w h] (to-view x y)
+        center (mapv #(+ % half-tile-size) [w h])
+        shift (mapv #(* % half-tile-size) direction)
+        [x1 y1] (mapv - center shift)
+        [x2 y2] (mapv + center shift)]
+    [:path.hit.bowman {:key       (:id unit)
+                       :d         (str "M" x1 " " y1 "L" x2 " " y2)}]))
 
-(defn render-hit-general [unit tick]
-  (when (show-hit? unit tick)
-    (render-hit unit)))
+(defn render-unit-icon [unit]
+  (let [letter (case (:type unit)
+                 :swordsman "S"
+                 :pikeman "P"
+                 :bowman "B")]
+    [:text.unit-letter letter]))
 
 (defn render-units [{:keys [player-id] :as db}
                     {:keys [units tick] :as game}
@@ -159,22 +175,36 @@
         :when (seen? visible-bounds x y)
         :let [dead? (engine/dead? unit)]]
     [:g {:key       id
-         :transform (str "translate(" (+ w half-tile-size) " " (+ h half-tile-size) ")"
-                         "rotate(" (- (direction->rotation unit)) ")")
+         :transform (unit-translate unit)
          :class     (str/join " "
-                              (cond-> ["player"]
+                              (cond-> ["unit"]
                                       (= player-id (:player-id unit)) (conj "you")
                                       (:player-id unit) (conj "live")
                                       dead? (conj "dead")))}
-     (player-dir unit)
-     (render-hit-general unit tick)
-     [:circle.player-icon {:r half-tile-size}]]))
+     (when-not dead? (unit-dir unit))
+     ;(render-hit unit)
+     [:circle.unit-icon {:r half-tile-size}]
+     (render-unit-icon unit)]))
 
-(defn top-transform [{:keys [x y] :as unit} sight]
+(defn render-hits [{:keys [units] :as game} visible-bounds]
+  (->> units
+       (vals)
+       (filter
+         (fn [unit]
+           (and (:hit unit)
+                (seen? visible-bounds
+                       (get-in unit [:hit :x])
+                       (get-in unit [:hit :y])))))
+       (map
+         (fn [unit]
+           (let []
+             (render-hit unit))))))
+
+(defn top-transform [{:keys [x y] :as unit} sight width height]
   (let [w (* tile-size x)
         h (* tile-size y)
         r (* tile-size sight)]
-    [(- r w) (- r h)]))
+    [(- (/ width 2) w) (- (/ height 2) h)]))
 
 (defn svg-defs [unit sight]
   [:defs
@@ -255,8 +285,8 @@
             (when (updated? props next-props)
               (launch-animation this props next-props))))]
     (with-meta comp
-      {:component-will-receive-props update
-       :component-will-unmount clear-timer})))
+               {:component-will-receive-props update
+                :component-will-unmount       clear-timer})))
 
 (defn render-field* [{:keys [game unit x y]}]
   (let [meta (engine/unit-meta (:type unit))
@@ -265,7 +295,9 @@
          :style     {:mask "url(#sight-mask)"}}
      [:g.tile-group
       (render-tiles game visible-bounds)]
-     [:g.player-group
+     [:g.hit-group
+      (render-hits game visible-bounds)]
+     [:g.unit-group
       (render-units @db game visible-bounds)]]))
 
 (def render-field-animated
@@ -278,7 +310,6 @@
                 nx (+ x1 (* i (- x2 x1)))
                 ny (+ y1 (* i (- y2 y1)))
                 transform (str "translate(" nx "," ny ")")]
-            (println "upd" [x1 y1] [x2 y2] [nx ny])
             (.setAttribute node "transform" transform)))]
     (animated render-field* updated? upd 100)))
 
@@ -291,7 +322,7 @@
         height (.. js/document -documentElement -clientHeight)
         unit (get-in game [:units unit-id])
         meta (engine/unit-meta (:type unit))
-        [x y] (top-transform unit (:sight meta))]
+        [x y] (top-transform unit (:sight meta) width height)]
     ;(println "render-field" unit-id (:hit unit))
     [:div
      [:div#game-field

@@ -64,15 +64,15 @@
 
 (defmethod event-msg-handler :game/updated
   [_ msg]
-  (let [{:keys [game]} msg]
-    ;(println "game/updated" (dissoc game :units))
-    (game/update-game! game)))
+  (let [{:keys [game log]} msg]
+    (println "game/updated" (keys msg))
+    (game/update-game! game log)))
 
 (defmethod event-msg-handler :game/joined
   [_ msg]
-  (let [{:keys [game unit-id]} msg]
+  (let [{:keys [game unit-id log]} msg]
     (println "game/joined" (:id game) "as" (get-in game [:units unit-id]))
-    (game/joined! game unit-id)))
+    (game/joined! game unit-id log)))
 
 (defmethod event-msg-handler :default
   [type msg]

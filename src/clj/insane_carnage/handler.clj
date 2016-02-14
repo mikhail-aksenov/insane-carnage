@@ -117,10 +117,11 @@
   (game-event-handler msg))
 
 (defmethod game-event-handler :game/joined
-  [{:keys [game player-id unit] :as msg}]
+  [{:keys [game player-id unit log] :as msg}]
   (log/info "Game Event" (dissoc msg :game) (:id unit) (type player-id))
   (chsk-send! player-id [:game/joined {:game    (prepare-game-for-client game)
-                                       :unit-id (:id unit)}]))
+                                       :unit-id (:id unit)
+                                       :log log}]))
 
 (defmethod game-event-handler :game/updated
   [{:keys [game] :as msg}]

@@ -58,8 +58,8 @@
 (defn- generate-game
   ([] (generate-game (uuid)))
   ([game-id]
-   (let [width 100
-         height 100
+   (let [width 30
+         height 30
          ts (time/now)]
      {:id         game-id
       :width      width
@@ -128,7 +128,7 @@
 
 (defmethod game-event :game/tick
   [{:keys [tick] :as msg} game ch-out]
-  (let [next-game (engine/process-tick game tick)
+  (let [[next-game log] (engine/process-tick game tick)
         over? (= :finished (:state next-game))]
     (log/debug "game-event" msg)
     (cond
@@ -138,6 +138,10 @@
       (not= game next-game)
       (put! ch-out {:type :game/updated
                     :game next-game}))
+    (when (not (empty? log))
+      (put! ch-out {:type    :game/log
+                    :game-id (:id game)
+                    :log     log}))
     next-game))
 
 (defmethod game-event :unit/move
@@ -163,8 +167,9 @@
 
 (def empty-server {:games   {}
                    :players {}
+                   :logs    {}
                    :tick    0
-                   :pause false})
+                   :pause   false})
 
 (defmulti server-event
           (fn [msg app-state ch-out] (:type msg)))
@@ -203,7 +208,8 @@
 (defmethod server-event :game/joined
   [{:keys [game unit player-id] :as msg} app-state {:keys [ch-out]}]
   (log/info "server-event" (dissoc msg :game) (:id game))
-  (put! ch-out msg)
+  (put! ch-out (assoc msg
+                 :log (get-in app-state [:logs (:id game)])))
   (-> app-state
       (update-in [:players player-id] assoc
                  :game-id (:id game)
@@ -225,6 +231,12 @@
   (log/debug "server-event" (dissoc msg :game) (:id game))
   (put! ch-out msg)
   (assoc app-state [:games (:id game)] game))
+
+(defmethod server-event :game/log
+  [{:keys [log game-id] :as msg} app-state {:keys [ch-out]}]
+  (log/debug "server-event" (dissoc msg :log))
+  (put! ch-out msg)
+  (update-in app-state [:logs game-id] concat log))
 
 (defmethod server-event :game/over
   [{:keys [game]} app-state {:keys [mix-in]}]
@@ -286,8 +298,8 @@
           (close-games (:games app-state))
           (close! ch-in)
           (close! ch-out))))
-    ;(go-loop []
-    ;  (when-let [_ (<! timer)]
-    ;    (>! ch-in {:type :server/tick})
-    ;    (recur)))
+    (go-loop []
+      (when-let [_ (<! timer)]
+        (>! ch-in {:type :server/tick})
+        (recur)))
     [ch-in ch-out]))
